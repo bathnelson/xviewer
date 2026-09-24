@@ -178,7 +178,7 @@ Via **Bestand → Excel per regel...** wordt elke gefilterde rij als apart `.xls
 | **Horizontaal** | Veldnamen in rij 1, waarden in rij 2 (standaard tabelformaat) |
 | **Verticaal** | Veldnamen in kolom A, waarden in kolom B (key-value kaart) |
 
-De bestanden worden genummerd (`001.xlsx`, `002.xlsx`, ...) en krijgen indien mogelijk een herkenbare naam uit een kolom met naam/adres/titel. De ZIP wordt client-side opgebouwd met een inline ZIP-builder (`buildZip`, `crc32`) — geen externe library nodig.
+Via **Bestandsnaam uit veld** kies je welke kolom de bestandsnaam levert (standaard een kolom met naam/VvE/titel, anders adres; of "alleen volgnummer"). Lege waarden vallen terug op het volgnummer, dubbele namen krijgen een suffix (`VvE X (2).xlsx`) en tekens die niet in bestandsnamen mogen worden vervangen door `_`. De ZIP wordt client-side opgebouwd met een inline ZIP-builder (`buildZip`, `crc32`) — geen externe library nodig.
 
 ## Kleurprofielen (`THEME_PROFILES`)
 

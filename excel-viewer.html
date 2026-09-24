@@ -1078,7 +1078,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 </div>
 
 <div class="row-detail-overlay" id="perRowDialogOverlay">
-  <div class="row-detail-card" style="max-width:440px;">
+  <div class="row-detail-card" style="max-width:440px;user-select:none;">
     <div class="row-detail-header">
       <h3>Excel per regel</h3>
       <button type="button" class="icon-btn" id="btnClosePerRow">&times;</button>
@@ -1090,6 +1090,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       </label>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="radio" name="perRowLayout" value="vertical"> <strong>Verticaal</strong> — veldnamen in kolom A, waarden in kolom B
+      </label>
+      <label style="display:block;margin-top:14px;">
+        <strong>Bestandsnaam uit veld</strong>
+        <select id="perRowNameField" style="display:block;width:100%;margin-top:4px;"></select>
       </label>
       <p id="perRowCount" style="margin:12px 0 0;font-size:13px;color:#666;"></p>
     </div>
@@ -1315,6 +1319,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const colLetterRow = document.getElementById('colLetterRow');
   const tableHeadRow = document.getElementById('tableHeadRow');
   const dataColgroup = document.getElementById('dataColgroup');
+  const dataTable = document.getElementById('dataTable');
   const tableBody = document.getElementById('tableBody');
   const pageInfo = document.getElementById('pageInfo');
   const btnPrevPage = document.getElementById('btnPrevPage');
@@ -1346,6 +1351,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const btnPerRowCancel = document.getElementById('btnPerRowCancel');
   const btnPerRowExport = document.getElementById('btnPerRowExport');
   const perRowCount = document.getElementById('perRowCount');
+  const perRowNameField = document.getElementById('perRowNameField');
   const btnClearAllFacets = document.getElementById('btnClearAllFacets');
   const btnToggleFacetEdit = document.getElementById('btnToggleFacetEdit');
   const facetPanel = document.getElementById('facetPanel');
@@ -3548,13 +3554,26 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     // gewoon hun eigen th-CSS zoals voorheen); alleen de echte datakolommen krijgen een berekende
     // breedte, zodat table-layout:fixed daadwerkelijk verstandige, per-kolom-type breedtes toepast
     // i.p.v. de vaak-misleidende automatische content-gok van de browser.
-    dataColgroup.appendChild(document.createElement('col'));
-    if (grouping) dataColgroup.appendChild(document.createElement('col'));
+    const cornerCol = document.createElement('col');
+    cornerCol.style.width = '40px';
+    dataColgroup.appendChild(cornerCol);
+    let totalWidth = 40;
+    if (grouping){
+      const groupCol = document.createElement('col');
+      groupCol.style.width = '240px';
+      dataColgroup.appendChild(groupCol);
+      totalWidth += 240;
+    }
     visibleCols.forEach(c => {
       const col = document.createElement('col');
-      col.style.width = computeColumnWidthPx(c, fieldConfig[c.name]) + 'px';
+      const w = computeColumnWidthPx(c, fieldConfig[c.name]);
+      col.style.width = w + 'px';
+      totalWidth += w;
       dataColgroup.appendChild(col);
     });
+    // table-layout:fixed negeert col-breedtes zolang de tabel zelf width:auto heeft; zonder
+    // expliciete breedte persen veel kolommen zich in de schermbreedte en breken woorden per letter.
+    dataTable.style.width = totalWidth + 'px';
 
     const letterCorner = document.createElement('th');
     letterCorner.className = 'corner-cell';
@@ -4303,7 +4322,21 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     closeMenus();
     const n = getFilteredRows().length;
     perRowCount.textContent = n + ' rij' + (n !== 1 ? 'en' : '') + ' worden geëxporteerd.';
+    const prev = perRowNameField.value;
+    const guessCol = columns.find(c => /naam|name|vve|titel|title/i.test(c.name))
+      || columns.find(c => /adres|address/i.test(c.name));
+    const guess = guessCol ? guessCol.name : '';
+    perRowNameField.innerHTML = '<option value="">(alleen volgnummer)</option>' +
+      columns.map(c => `<option value="${escapeAttr(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+    perRowNameField.value = columns.some(c => c.name === prev) ? prev : guess;
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
     perRowDialogOverlay.classList.add('visible');
+    btnPerRowExport.focus();
+  });
+  perRowDialogOverlay.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closePerRowDialog();
   });
 
   function crc32(buf){
@@ -4327,7 +4360,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const lv = new DataView(lh.buffer);
       lv.setUint32(0, 0x04034b50, true);  // local file header signature
       lv.setUint16(4, 20, true);           // version needed
-      lv.setUint16(6, 0, true);            // flags
+      lv.setUint16(6, 0x0800, true);       // flags: UTF-8 bestandsnaam
       lv.setUint16(8, 0, true);            // compression: stored
       lv.setUint16(10, 0, true);           // mod time
       lv.setUint16(12, 0, true);           // mod date
@@ -4343,7 +4376,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       cv.setUint32(0, 0x02014b50, true);   // central dir signature
       cv.setUint16(4, 20, true);            // version made by
       cv.setUint16(6, 20, true);            // version needed
-      cv.setUint16(8, 0, true);             // flags
+      cv.setUint16(8, 0x0800, true);        // flags: UTF-8 bestandsnaam
       cv.setUint16(10, 0, true);            // compression: stored
       cv.setUint16(12, 0, true);            // mod time
       cv.setUint16(14, 0, true);            // mod date
@@ -4380,6 +4413,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const rows = buildExportRows();
     const colNames = columns.map(c => c.name);
     const baseName = sanitizeBaseName(currentSheet || sourceFileName || 'data');
+    const nameField = perRowNameField.value;
+    const usedNames = new Map();
     const files = [];
     for (let i = 0; i < rows.length; i++){
       const row = rows[i];
@@ -4395,12 +4430,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Data');
       const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
-      const idx = String(i + 1).padStart(String(rows.length).length, '0');
-      let fname = idx;
-      const identCol = colNames.find(n => /naam|name|adres|address|titel|title/i.test(n));
-      if (identCol && row[identCol]){
-        fname += '_' + String(row[identCol]).replace(/[^a-z0-9_-]+/gi,'_').slice(0,60);
+      let fname = '';
+      if (nameField && row[nameField] !== null && row[nameField] !== undefined){
+        const raw = row[nameField] instanceof Date ? row[nameField].toLocaleDateString('nl-NL') : String(row[nameField]);
+        fname = raw.replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
       }
+      if (!fname) fname = String(i + 1).padStart(String(rows.length).length, '0');
+      const seen = usedNames.get(fname.toLowerCase()) || 0;
+      usedNames.set(fname.toLowerCase(), seen + 1);
+      if (seen) fname += ' (' + (seen + 1) + ')';
       files.push({name: baseName + '/' + fname + '.xlsx', data: new Uint8Array(wbout)});
     }
     const zipBlob = buildZip(files);
