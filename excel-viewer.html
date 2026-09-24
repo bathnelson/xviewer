@@ -1395,6 +1395,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 
+  // SheetJS leest CSV-bytes als Latin-1; UTF-8-CSV's zonder BOM worden dan "CafÃ©". Daarom
+  // CSV's zelf decoderen: UTF-8 als dat geldig is, anders Windows-1252 (oude Excel-export).
+  function readWorkbookBytes(bytes, fileName){
+    if (/\.(csv|txt)$/i.test(fileName || '')){
+      let text;
+      try { text = new TextDecoder('utf-8', {fatal:true}).decode(bytes); }
+      catch(e){ text = new TextDecoder('windows-1252').decode(bytes); }
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      return XLSX.read(text, {type:'string', cellDates:true});
+    }
+    return XLSX.read(bytes, {type:'array', cellDates:true});
+  }
+
   function handleFile(file){
     sourceFileName = file.name || null;
     showProgress(2, 'Bestand lezen...');
@@ -1412,8 +1425,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       updateProgress(20, 'Bestand ingelezen, workbook parsen...');
       nextTick(() => {
         try{
-          const data = new Uint8Array(evt.target.result);
-          workbook = XLSX.read(data, {type:'array', cellDates:true});
+          workbook = readWorkbookBytes(new Uint8Array(evt.target.result), file.name);
           sheetNames = workbook.SheetNames;
           updateProgress(45, 'Workbook geparsed');
           nextTick(() => {
@@ -1765,10 +1777,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const YEAR_MIN = 1700;
   const YEAR_MAX_MARGIN = 1; // sta het huidige jaar + 1 toe (bouwjaar van net-opgeleverde nieuwbouw)
   function looksLikeYearValue(v){
-    const n = typeof v === 'number' ? v : parseFloat(v);
-    return Number.isFinite(n) && Number.isInteger(n) && n >= YEAR_MIN && n <= (new Date().getFullYear() + YEAR_MAX_MARGIN);
+    let n;
+    if (typeof v === 'number') n = v;
+    else if (typeof v === 'string' && /^\d{4}$/.test(v.trim())) n = Number(v.trim());
+    else return false;
+    return Number.isInteger(n) && n >= YEAR_MIN && n <= (new Date().getFullYear() + YEAR_MAX_MARGIN);
   }
   const YEAR_MIN_FRACTION = 0.7;
+  // Kolommen met jaartallen die géén bouwjaar zijn: die krijgen geen bouwjaarklassen.
+  const NOT_BOUWJAAR_NAME_RE = /jaartal|boekjaar|belastingjaar|peiljaar|verslagjaar|^jaar$|oprichting|opgericht|postcode|datum|nummer|\bnr\b|\bid\b|code/i;
 
   function detectColumns(rows){
     const names = Object.keys(rows[0] || {});
@@ -1841,10 +1858,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const suggestEmail = type === 'tekst' && nonNull > 0 && (emailLikeCount / nonNull) >= EMAIL_MIN_FRACTION;
       const suggestFinancial = type === 'getal' && FINANCIAL_NAME_RE.test(name);
       // Bouwjaar-detectie: eerst op naam ("Bouwjaar", "Bouwperiode"), anders puur op waarde als
-      // de meeste (gesplitste) waarden aannemelijke 4-cijferige jaartallen zijn - zo werkt de
-      // periode-facet ook voor kolommen die niet zo heten (bv. "Jaar van oprichting").
+      // de meeste (gesplitste) waarden aannemelijke 4-cijferige jaartallen zijn, tenzij de naam
+      // duidelijk een ander soort jaar/code aanduidt (Jaartal, Boekjaar, Postcode, ...).
       const yearFraction = yearLikeTotal > 0 ? yearLikeCount / yearLikeTotal : 0;
-      const rangePreset = detectRangePreset(name) || (yearFraction >= YEAR_MIN_FRACTION ? 'bouwjaar' : null);
+      const rangePreset = detectRangePreset(name) ||
+        (yearFraction >= YEAR_MIN_FRACTION && !NOT_BOUWJAAR_NAME_RE.test(name) ? 'bouwjaar' : null);
       // "Lijkt op een unieke naam per rij" (bv. VvE-naam, straatnaam): tekstkolom waarvan bijna elke
       // waarde anders is. Dit wordt gebruikt om vrije-tekstzoeken standaard te beperken tot kolommen
       // die er echt toe doen, in plaats van elke kolom (incl. lage-cardinaliteit categorieën) mee te
@@ -2661,7 +2679,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       nextTick(() => {
         let importWb;
         try {
-          importWb = XLSX.read(new Uint8Array(evt.target.result), {type:'array', cellDates:true});
+          importWb = readWorkbookBytes(new Uint8Array(evt.target.result), file.name);
         } catch(err){
           hideProgress();
           alert('Kon dit bestand niet lezen: ' + err.message);

@@ -29,7 +29,8 @@ Het bestand is ~1MB doordat de complete **SheetJS/xlsx.js** library inline staat
 
 ### Bestand inlezen (`handleFile`, `loadSheet`)
 - Leest het bestand via `FileReader.readAsArrayBuffer`
-- Parst met `XLSX.read()` (SheetJS) naar een workbook
+- Parst met `XLSX.read()` (SheetJS) naar een workbook, via `readWorkbookBytes`
+- **CSV-tekenset**: CSV's worden eerst zelf gedecodeerd — UTF-8 als dat geldig is, anders Windows-1252 (oudere Excel-export) — zodat accenten (é, ë, ï) goed doorkomen, ook zonder BOM
 - Bij meerdere tabbladen: sheet-picker
 - Ondersteunt **verticale tabellen** (veldnamen in kolom A) via `transposeMatrix()`
 - Automatische **header-detectie** (`findHeaderRowIndex`): slaat lege/titeltekst-regels boven de eigenlijke header over
@@ -46,7 +47,7 @@ Analyseert alle waarden per kolom en detecteert automatisch:
 | **URL's** | http(s)/www → klikbare links |
 | **Energielabels** | A+ t/m G → gekleurde badges |
 | **Financiele velden** | prijs/bedrag/kosten → euro-opmaak |
-| **Bouwjaarperiodes** | 4-cijferige jaartallen → voorgedefinieerde klassen |
+| **Bouwjaarperiodes** | Kolomnaam met bouwjaar/bouwperiode, óf ≥70% van de waarden is precies een 4-cijferig jaartal → bouwjaarklassen. Niet bij namen als Jaartal, Boekjaar, Postcode, Datum, Nummer, Code (`NOT_BOUWJAAR_NAME_RE`); die krijgen een gewoon bereik- of waardenfilter |
 | **Komma-gescheiden waarden** | "waarde1, waarde2" → multi-select facet |
 | **Basis(specificatie)** | "woning (boven)" → parts-facet |
 | **Adresvelden** | straat/huisnr/postcode/plaats → samengesteld adres |
