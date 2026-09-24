@@ -1470,6 +1470,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const wbXml = readXml('xl/workbook.xml');
     if (!wbXml) return result;
     const wbRels = relsOf('xl/workbook.xml');
+    const cellImageForVm = buildInCellImageLookup(readXml, readBytes, relsOf, wbRels);
     [...wbXml.getElementsByTagNameNS('*', 'sheet')].forEach(sheetEl => {
       const sheetName = sheetEl.getAttribute('name');
       const rid = sheetEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || sheetEl.getAttribute('r:id');
@@ -1499,10 +1500,73 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           images.push({row, col, image: makeImage(data, mediaPath.split('/').pop(), nv ? nv.getAttribute('descr') : '')});
         });
       });
+      if (cellImageForVm){
+        [...sheetXml.getElementsByTagNameNS('*', 'c')].forEach(cEl => {
+          const vm = cEl.getAttribute('vm');
+          const image = vm && cellImageForVm(parseInt(vm, 10));
+          if (!image) return;
+          const addr = XLSX.utils.decode_cell(cEl.getAttribute('r'));
+          images.push({row: addr.r, col: addr.c, image, inCell: true});
+        });
+      }
       if (images.length) result[sheetName] = images;
     });
     return result;
   }
+  // Excel 365 "Afbeelding in cel": de cel heeft vm="N" (1-based) → metadata.xml valueMetadata →
+  // futureMetadata XLRICHVALUE → rich value (rdrichvalue.xml) → sleutel _rvRel:LocalImageIdentifier
+  // → richValueRel.xml → xl/media/*. Geeft een functie vm → foto (of null) terug.
+  function buildInCellImageLookup(readXml, readBytes, relsOf, wbRels){
+    const pathByType = {};
+    Object.values(wbRels).forEach(p => { if (p) pathByType[p.split('/').pop().toLowerCase()] = p; });
+    const metaXml = pathByType['metadata.xml'] && readXml(pathByType['metadata.xml']);
+    const rvPath = pathByType['rdrichvalue.xml'];
+    const structXml = pathByType['rdrichvaluestructure.xml'] && readXml(pathByType['rdrichvaluestructure.xml']);
+    const relPath = pathByType['richvaluerel.xml'];
+    if (!metaXml || !rvPath || !structXml || !relPath) return null;
+
+    const types = [...metaXml.getElementsByTagNameNS('*', 'metadataType')].map(t => t.getAttribute('name'));
+    const future = [...metaXml.getElementsByTagNameNS('*', 'futureMetadata')].find(f => f.getAttribute('name') === 'XLRICHVALUE');
+    const futureRvIndex = future ? [...future.getElementsByTagNameNS('*', 'bk')].map(bk => {
+      const rvb = bk.getElementsByTagNameNS('*', 'rvb')[0];
+      return rvb ? parseInt(rvb.getAttribute('i'), 10) : null;
+    }) : [];
+    const valueMeta = metaXml.getElementsByTagNameNS('*', 'valueMetadata')[0];
+    const vmToRv = valueMeta ? [...valueMeta.getElementsByTagNameNS('*', 'bk')].map(bk => {
+      const rc = bk.getElementsByTagNameNS('*', 'rc')[0];
+      if (!rc || types[parseInt(rc.getAttribute('t'), 10) - 1] !== 'XLRICHVALUE') return null;
+      const rvIdx = futureRvIndex[parseInt(rc.getAttribute('v'), 10)];
+      return rvIdx === undefined ? null : rvIdx;
+    }) : [];
+
+    const imageKeyPos = [...structXml.getElementsByTagNameNS('*', 's')].map(s =>
+      [...s.getElementsByTagNameNS('*', 'k')].findIndex(k => k.getAttribute('n') === '_rvRel:LocalImageIdentifier'));
+    const rvXml = readXml(rvPath);
+    const relIndexByRv = [...rvXml.getElementsByTagNameNS('*', 'rv')].map(rv => {
+      const pos = imageKeyPos[parseInt(rv.getAttribute('s'), 10)];
+      const v = pos >= 0 ? rv.getElementsByTagNameNS('*', 'v')[pos] : null;
+      return v ? parseInt(v.textContent, 10) : null;
+    });
+
+    const relXml = readXml(relPath);
+    const relRels = relsOf(relPath);
+    const mediaByRelIndex = relXml ? [...relXml.getElementsByTagNameNS('*', 'rel')].map(rel =>
+      relRels[rel.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || rel.getAttribute('r:id')]) : [];
+
+    const cache = new Map(); // dezelfde foto in meerdere cellen maar één keer inlezen
+    return vm => {
+      const rvIdx = vmToRv[vm - 1];
+      const relIdx = rvIdx == null ? null : relIndexByRv[rvIdx];
+      const mediaPath = relIdx == null ? null : mediaByRelIndex[relIdx];
+      if (!mediaPath) return null;
+      if (!cache.has(mediaPath)){
+        const data = readBytes(mediaPath);
+        cache.set(mediaPath, data ? makeImage(data, mediaPath.split('/').pop(), '') : null);
+      }
+      return cache.get(mediaPath);
+    };
+  }
+
   function resolveZipPath(baseDir, target){
     if (!target) return null;
     if (target.startsWith('/')) return target.slice(1);
@@ -1515,6 +1579,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // Zet een tabblad om naar rij-objecten (header-detectie, evt. gekanteld) en koppelt de foto's
   // aan de rij/kolom waarin hun linkerbovenhoek staat.
   const PHOTO_FALLBACK_COL = 'Foto';
+  function isExcelErrorValue(v){
+    return typeof v === 'string' && /^#(VALUE!|WAARDE!|N\/A|REF!|NAME\?)$/i.test(v.trim());
+  }
   function sheetToRows(wb, sheetName){
     const ws = wb.Sheets[sheetName];
     const range = ws && ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : {s:{r:0, c:0}};
@@ -1522,10 +1589,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const vertical = tableOrientation === 'verticaal';
     if (vertical) matrix = transposeMatrix(matrix);
     const imgByCell = new Map();
-    ((wb.__images || {})[sheetName] || []).forEach(({row, col, image}) => {
+    ((wb.__images || {})[sheetName] || []).forEach(({row, col, image, inCell}) => {
       // matrix[r][c] komt overeen met bladcel (range.s.r + r, range.s.c + c); gekanteld andersom.
       const r = vertical ? col - range.s.c : row - range.s.r;
       const c = vertical ? row - range.s.r : col - range.s.c;
+      // "Afbeelding in cel" heeft als celwaarde een #VALUE!-plaatshouder voor oudere programma's.
+      if (inCell && matrix[r] && isExcelErrorValue(matrix[r][c])) matrix[r][c] = null;
       const key = r + ',' + c;
       if (!imgByCell.has(key)) imgByCell.set(key, []);
       imgByCell.get(key).push(image);

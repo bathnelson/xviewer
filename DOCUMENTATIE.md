@@ -38,7 +38,8 @@ Het bestand is ~1MB doordat de complete **SheetJS/xlsx.js** library inline staat
 
 ### Foto's (`extractWorkbookImages`, `sheetToRows`)
 SheetJS (gratis versie) negeert afbeeldingen, dus die leest de app zelf uit het xlsx-zipbestand:
-- Route: `xl/workbook.xml` → tabblad → `<drawing>` → `xl/drawings/drawingN.xml` → ankers (`twoCellAnchor`/`oneCellAnchor`) → `xl/media/*`
+- **Zwevende foto's**: `xl/workbook.xml` → tabblad → `<drawing>` → `xl/drawings/drawingN.xml` → ankers (`twoCellAnchor`/`oneCellAnchor`) → `xl/media/*`
+- **Excel 365 "Afbeelding in cel"** (`buildInCellImageLookup`): cel met `vm="N"` → `metadata.xml` (valueMetadata → futureMetadata XLRICHVALUE) → `richData/rdrichvalue.xml` (sleutel `_rvRel:LocalImageIdentifier` volgens `rdrichvaluestructure.xml`) → `richData/richValueRel.xml` → `xl/media/*`. De `#VALUE!`-plaatshouder in die cellen wordt leeggemaakt
 - Elke foto wordt gekoppeld aan de rij en kolom van zijn linkerbovenhoek (ook bij verticale tabellen). Staat die kolom buiten de tabel, dan komt hij in een kolom "Foto"
 - Opslag: per rij in een **niet-enumereerbare** eigenschap `__images` (`{kolomnaam: [{fileName, ext, mime, descr, bytes, url}]}`), zodat foto's niet meetellen als kolom, in zoeken, facetten of de gewone export
 - Weergave: miniatuur (48px) in de tabel, groot in het detailvenster. Formaten die de browser niet kan tonen (EMF/WMF/TIFF) verschijnen als bestandsnaam
@@ -46,7 +47,7 @@ SheetJS (gratis versie) negeert afbeeldingen, dus die leest de app zelf uit het 
 - **Excel per regel**: foto's komen als losse bestanden naast het Excel-bestand in de ZIP (`aap.xlsx` + `aap.jpeg`, bij meerdere `aap (foto 2).jpeg`); de fotocel bevat de bestandsnaam
 - **Opslaan als HTML**: foto's gaan base64-gecodeerd mee in `images` van de payload (het bestand wordt dus groter) en worden bij openen hersteld
 - **Bestand toevoegen**: foto's gaan mee bij rijen toevoegen en bij kolommen koppelen (voor de nieuwe kolommen)
-- Niet ondersteund: Excel 365 "Afbeelding in cel" (andere opslag) en foto's in .xls/.csv
+- Niet ondersteund: foto's in .xls/.csv en webafbeeldingen via de IMAGE()-functie (die staan niet in het bestand)
 
 ### Kolomdetectie (`detectColumns`)
 Analyseert alle waarden per kolom en detecteert automatisch:
