@@ -1081,6 +1081,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   </div>
 </div>
 
+<div class="row-detail-overlay" id="importSheetOverlay">
+  <div class="row-detail-card" style="max-width:460px;user-select:none;">
+    <div class="row-detail-header">
+      <h3 id="importSheetTitle">Welk tabblad?</h3>
+      <button type="button" class="icon-btn" id="btnCloseImportSheet">&times;</button>
+    </div>
+    <div class="row-detail-body" style="padding:12px 16px;">
+      <p style="margin:0 0 6px;">Dit bestand heeft meerdere tabbladen. Kies welk tabblad je wilt toevoegen:</p>
+      <div id="importSheetList"></div>
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+      <button type="button" class="small" id="btnImportSheetCancel">Annuleren</button>
+      <button type="button" class="primary" id="btnImportSheetConfirm">Volgende</button>
+    </div>
+  </div>
+</div>
+
 <div class="row-detail-overlay" id="perRowDialogOverlay">
   <div class="row-detail-card" style="max-width:440px;user-select:none;">
     <div class="row-detail-header">
@@ -1350,6 +1367,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const miViewSave = document.getElementById('miViewSave');
   const exportMenuList = document.getElementById('exportMenuList');
   const miExportPerRow = document.getElementById('miExportPerRow');
+  const importSheetOverlay = document.getElementById('importSheetOverlay');
+  const importSheetTitle = document.getElementById('importSheetTitle');
+  const importSheetList = document.getElementById('importSheetList');
+  const btnImportSheetConfirm = document.getElementById('btnImportSheetConfirm');
+  const btnImportSheetCancel = document.getElementById('btnImportSheetCancel');
+  const btnCloseImportSheet = document.getElementById('btnCloseImportSheet');
   const perRowDialogOverlay = document.getElementById('perRowDialogOverlay');
   const btnClosePerRow = document.getElementById('btnClosePerRow');
   const btnPerRowCancel = document.getElementById('btnPerRowCancel');
@@ -2896,35 +2919,91 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           alert('Kon dit bestand niet lezen: ' + err.message);
           return;
         }
-        const newRows = sheetToRows(importWb, importWb.SheetNames[0]);
-        if (!newRows.length){
+        if (importWb.SheetNames.length > 1){
           hideProgress();
-          alert('Het extra bestand bevat geen data.');
-          return;
+          showImportSheetPicker(importWb, file.name, sheetName => {
+            showProgress(30, 'Tabblad "' + sheetName + '" laden...');
+            nextTick(() => continueImport(importWb, sheetName));
+          });
+        } else {
+          continueImport(importWb, importWb.SheetNames[0]);
         }
-        updateProgress(40, 'Sleutelvelden analyseren...');
-        nextTick(() => {
-          const existingKeys = columns.map(c => c.name);
-          const importKeys = Object.keys(newRows[0] || {});
-          const sharedCols = existingKeys.filter(k => importKeys.includes(k));
-          if (!sharedCols.length){
-            hideProgress();
-            alert('Geen overeenkomende kolommen gevonden — controleer of de kolomnamen overeenkomen.');
-            return;
-          }
-          const newCols = importKeys.filter(k => !existingKeys.includes(k));
-          const sharedKeyOptions = detectSharedKeys(columns, importKeys, rawRows, newRows);
-          hideProgress();
-          if (sharedKeyOptions.length && newCols.length){
-            showMergeDialog(newRows, importKeys, sharedKeyOptions, newCols);
-          } else {
-            executeAppend(newRows, importKeys);
-          }
-        });
       });
     };
     reader.readAsArrayBuffer(file);
   }
+
+  function continueImport(importWb, sheetName){
+    const newRows = sheetToRows(importWb, sheetName);
+    if (!newRows.length){
+      hideProgress();
+      alert('Het tabblad "' + sheetName + '" bevat geen data.');
+      return;
+    }
+    updateProgress(40, 'Sleutelvelden analyseren...');
+    nextTick(() => {
+      const existingKeys = columns.map(c => c.name);
+      const importKeys = Object.keys(newRows[0] || {});
+      const sharedCols = existingKeys.filter(k => importKeys.includes(k));
+      if (!sharedCols.length){
+        hideProgress();
+        alert('Geen overeenkomende kolommen gevonden in tabblad "' + sheetName + '" — controleer of de kolomnamen overeenkomen.');
+        return;
+      }
+      const newCols = importKeys.filter(k => !existingKeys.includes(k));
+      const sharedKeyOptions = detectSharedKeys(columns, importKeys, rawRows, newRows);
+      hideProgress();
+      if (sharedKeyOptions.length && newCols.length){
+        showMergeDialog(newRows, importKeys, sharedKeyOptions, newCols);
+      } else {
+        executeAppend(newRows, importKeys);
+      }
+    });
+  }
+
+  // Keuze van het tabblad bij "Bestand toevoegen". Per tabblad tonen we hoeveel kolomnamen
+  // overeenkomen met de huidige data, en het best passende tabblad staat voorgeselecteerd.
+  function showImportSheetPicker(wb, fileName, onChoose){
+    const existing = new Set(columns.map(c => c.name.toLowerCase()));
+    const info = wb.SheetNames.map(name => {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws['!ref']) return {name, rows: 0, shared: 0};
+      let matrix = XLSX.utils.sheet_to_json(ws, {header: 1, defval: null, raw: true, sheetRows: HEADER_SCAN_MAX + 1});
+      if (tableOrientation === 'verticaal') matrix = transposeMatrix(matrix);
+      const header = matrix.length ? buildHeaderNames(matrix[findHeaderRowIndex(matrix)]) : [];
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const rows = tableOrientation === 'verticaal' ? range.e.c - range.s.c : range.e.r - range.s.r;
+      return {name, rows, shared: header.filter(h => existing.has(h.toLowerCase())).length};
+    });
+    const best = info.reduce((a, b) => (b.shared > a.shared || (b.shared === a.shared && b.name === currentSheet && a.name !== currentSheet)) ? b : a, info[0]);
+    importSheetTitle.textContent = 'Welk tabblad uit "' + fileName + '"?';
+    importSheetList.innerHTML = info.map(s => `
+      <label style="display:flex;align-items:baseline;gap:8px;padding:6px 0;cursor:pointer;${s.rows ? '' : 'opacity:.5;'}">
+        <input type="radio" name="importSheet" value="${escapeAttr(s.name)}"${s === best ? ' checked' : ''}${s.rows ? '' : ' disabled'}>
+        <span><strong>${escapeHtml(s.name)}</strong>
+        <span style="color:#666;font-size:12px;"> &mdash; ${s.rows ? '±' + s.rows.toLocaleString('nl-NL') + ' rijen, ' + s.shared + ' kolom' + (s.shared !== 1 ? 'men' : '') + ' gelijk aan huidige data' : 'leeg'}</span></span>
+      </label>`).join('');
+    importSheetConfirmHandler = () => {
+      const picked = importSheetList.querySelector('input[name="importSheet"]:checked');
+      if (!picked) return;
+      closeImportSheetPicker();
+      onChoose(picked.value);
+    };
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+    importSheetOverlay.classList.add('visible');
+    btnImportSheetConfirm.focus();
+  }
+  let importSheetConfirmHandler = null;
+  function closeImportSheetPicker(){ importSheetOverlay.classList.remove('visible'); importSheetConfirmHandler = null; }
+  btnImportSheetConfirm.addEventListener('click', () => { if (importSheetConfirmHandler) importSheetConfirmHandler(); });
+  btnImportSheetCancel.addEventListener('click', closeImportSheetPicker);
+  btnCloseImportSheet.addEventListener('click', closeImportSheetPicker);
+  importSheetOverlay.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closeImportSheetPicker();
+    if (e.key === 'Enter' && importSheetConfirmHandler){ e.preventDefault(); importSheetConfirmHandler(); }
+  });
 
   function switchScreen(which){
     dropScreen.style.display = which==='drop' ? 'flex' : 'none';

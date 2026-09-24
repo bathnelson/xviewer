@@ -134,7 +134,11 @@ Facetten tonen **live tellingen** die meebewegen met andere actieve filters (cro
 
 ### Bestand toevoegen (`handleImportFile`)
 
-Via **Bestand → Bestand toevoegen...** kan een tweede Excel- of CSV-bestand worden samengevoegd met de al geladen data. De app analyseert de kolommen van beide bestanden en biedt twee modi:
+Via **Bestand → Bestand toevoegen...** kan een tweede Excel- of CSV-bestand worden samengevoegd met de al geladen data.
+
+**Tabblad kiezen** (`showImportSheetPicker`): heeft het bestand meerdere tabbladen, dan verschijnt een keuzevenster met per tabblad het geschatte aantal rijen en hoeveel kolomnamen overeenkomen met de huidige data. Het tabblad met de meeste overeenkomende kolommen staat voorgeselecteerd (bij gelijkspel het tabblad met dezelfde naam als het huidige); lege tabbladen zijn niet te kiezen.
+
+De app analyseert daarna de kolommen van beide bestanden en biedt twee modi:
 
 #### 1. Rijen toevoegen (append + deduplicatie)
 
