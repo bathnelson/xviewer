@@ -34,7 +34,19 @@ Het bestand is ~1MB doordat de complete **SheetJS/xlsx.js** library inline staat
 - Bij meerdere tabbladen: sheet-picker
 - Ondersteunt **verticale tabellen** (veldnamen in kolom A) via `transposeMatrix()`
 - Automatische **header-detectie** (`findHeaderRowIndex`): slaat lege/titeltekst-regels boven de eigenlijke header over
-- Converteert cellenmatrix naar array-of-objects (`rawRows`)
+- Converteert cellenmatrix naar array-of-objects (`rawRows`) via `sheetToRows` (gedeeld door openen en "Bestand toevoegen")
+
+### Foto's (`extractWorkbookImages`, `sheetToRows`)
+SheetJS (gratis versie) negeert afbeeldingen, dus die leest de app zelf uit het xlsx-zipbestand:
+- Route: `xl/workbook.xml` → tabblad → `<drawing>` → `xl/drawings/drawingN.xml` → ankers (`twoCellAnchor`/`oneCellAnchor`) → `xl/media/*`
+- Elke foto wordt gekoppeld aan de rij en kolom van zijn linkerbovenhoek (ook bij verticale tabellen). Staat die kolom buiten de tabel, dan komt hij in een kolom "Foto"
+- Opslag: per rij in een **niet-enumereerbare** eigenschap `__images` (`{kolomnaam: [{fileName, ext, mime, descr, bytes, url}]}`), zodat foto's niet meetellen als kolom, in zoeken, facetten of de gewone export
+- Weergave: miniatuur (48px) in de tabel, groot in het detailvenster. Formaten die de browser niet kan tonen (EMF/WMF/TIFF) verschijnen als bestandsnaam
+- Filter: een pure fotokolom krijgt het facet "Met foto / Zonder foto" (`presence`)
+- **Excel per regel**: foto's komen als losse bestanden naast het Excel-bestand in de ZIP (`aap.xlsx` + `aap.jpeg`, bij meerdere `aap (foto 2).jpeg`); de fotocel bevat de bestandsnaam
+- **Opslaan als HTML**: foto's gaan base64-gecodeerd mee in `images` van de payload (het bestand wordt dus groter) en worden bij openen hersteld
+- **Bestand toevoegen**: foto's gaan mee bij rijen toevoegen en bij kolommen koppelen (voor de nieuwe kolommen)
+- Niet ondersteund: Excel 365 "Afbeelding in cel" (andere opslag) en foto's in .xls/.csv
 
 ### Kolomdetectie (`detectColumns`)
 Analyseert alle waarden per kolom en detecteert automatisch:

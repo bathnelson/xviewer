@@ -963,6 +963,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     font-weight:600;
   }
   .row-detail-field .rdf-value{flex:1;word-break:break-word;}
+  .cell-photos{display:flex;flex-wrap:wrap;gap:4px;}
+  .cell-thumb{height:48px;max-width:100%;object-fit:contain;border:1px solid var(--border);border-radius:3px;background:#fff;}
+  .rdf-value .cell-thumb{height:auto;max-height:280px;}
+  .cell-photo-file{font-size:12px;color:#666;}
   .row-detail-footer{
     padding:10px 16px;
     border-top:1px solid var(--border);
@@ -1405,7 +1409,150 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
       return XLSX.read(text, {type:'string', cellDates:true});
     }
-    return XLSX.read(bytes, {type:'array', cellDates:true});
+    const wb = XLSX.read(bytes, {type:'array', cellDates:true});
+    try { wb.__images = extractWorkbookImages(bytes); }
+    catch(err){ console.warn('Foto\'s konden niet worden gelezen:', err); wb.__images = {}; }
+    return wb;
+  }
+
+  // ---------- Foto's ----------
+  // SheetJS (gratis versie) negeert afbeeldingen. Zwevende foto's staan in het xlsx-zipbestand
+  // als xl/media/* met een anker (rij/kolom) in xl/drawings/drawingN.xml; die lezen we zelf.
+  const IMG_PROP = '__images';
+  const IMAGE_MIME = {png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', bmp:'image/bmp', webp:'image/webp', tif:'image/tiff', tiff:'image/tiff', emf:'image/emf', wmf:'image/wmf'};
+
+  function rowImages(row){ return (row && row[IMG_PROP]) || null; }
+  function attachImage(row, colName, img){
+    let map = row[IMG_PROP];
+    if (!map){
+      map = {};
+      // Niet-enumereerbaar: foto's tellen niet mee als kolom, in zoeken, facetten of JSON-export.
+      Object.defineProperty(row, IMG_PROP, {value: map, enumerable: false, writable: true, configurable: true});
+    }
+    (map[colName] = map[colName] || []).push(img);
+  }
+  function copyImages(from, to, onlyCols){
+    const map = rowImages(from);
+    if (!map) return;
+    Object.keys(map).forEach(col => {
+      if (onlyCols && !onlyCols.includes(col)) return;
+      map[col].forEach(img => attachImage(to, col, img));
+    });
+  }
+  function makeImage(bytes, fileName, descr){
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    const mime = IMAGE_MIME[ext] || 'application/octet-stream';
+    return {fileName, ext, mime, descr: descr || '', bytes, url: URL.createObjectURL(new Blob([bytes], {type: mime}))};
+  }
+
+  function extractWorkbookImages(bytes){
+    const result = {};
+    if (!(bytes[0] === 0x50 && bytes[1] === 0x4B)) return result; // geen zip (bv. oud .xls)
+    const zip = XLSX.CFB.read(bytes, {type:'array'});
+    const readBytes = path => {
+      const entry = XLSX.CFB.find(zip, '/' + path.replace(/^\/+/, ''));
+      return entry && entry.content ? new Uint8Array(entry.content) : null;
+    };
+    const readXml = path => {
+      const b = readBytes(path);
+      return b ? new DOMParser().parseFromString(new TextDecoder('utf-8').decode(b), 'application/xml') : null;
+    };
+    const relsOf = path => {
+      const dir = path.replace(/[^/]*$/, '');
+      const doc = readXml(dir + '_rels/' + path.split('/').pop() + '.rels');
+      const map = {};
+      if (!doc) return map;
+      [...doc.getElementsByTagName('Relationship')].forEach(rel => {
+        map[rel.getAttribute('Id')] = resolveZipPath(dir, rel.getAttribute('Target'));
+      });
+      return map;
+    };
+    const wbXml = readXml('xl/workbook.xml');
+    if (!wbXml) return result;
+    const wbRels = relsOf('xl/workbook.xml');
+    [...wbXml.getElementsByTagNameNS('*', 'sheet')].forEach(sheetEl => {
+      const sheetName = sheetEl.getAttribute('name');
+      const rid = sheetEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || sheetEl.getAttribute('r:id');
+      const sheetPath = wbRels[rid];
+      if (!sheetPath) return;
+      const sheetXml = readXml(sheetPath);
+      if (!sheetXml) return;
+      const sheetRels = relsOf(sheetPath);
+      const images = [];
+      [...sheetXml.getElementsByTagNameNS('*', 'drawing')].forEach(dEl => {
+        const drawingPath = sheetRels[dEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || dEl.getAttribute('r:id')];
+        const drawingXml = drawingPath && readXml(drawingPath);
+        if (!drawingXml) return;
+        const drawingRels = relsOf(drawingPath);
+        const anchors = [...drawingXml.getElementsByTagNameNS('*', 'twoCellAnchor'), ...drawingXml.getElementsByTagNameNS('*', 'oneCellAnchor')];
+        anchors.forEach(anchor => {
+          const from = anchor.getElementsByTagNameNS('*', 'from')[0];
+          const blip = anchor.getElementsByTagNameNS('*', 'blip')[0];
+          if (!from || !blip) return;
+          const row = parseInt(from.getElementsByTagNameNS('*', 'row')[0].textContent, 10);
+          const col = parseInt(from.getElementsByTagNameNS('*', 'col')[0].textContent, 10);
+          const embed = blip.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed') || blip.getAttribute('r:embed');
+          const mediaPath = drawingRels[embed];
+          const data = mediaPath && readBytes(mediaPath);
+          if (!data) return;
+          const nv = anchor.getElementsByTagNameNS('*', 'cNvPr')[0];
+          images.push({row, col, image: makeImage(data, mediaPath.split('/').pop(), nv ? nv.getAttribute('descr') : '')});
+        });
+      });
+      if (images.length) result[sheetName] = images;
+    });
+    return result;
+  }
+  function resolveZipPath(baseDir, target){
+    if (!target) return null;
+    if (target.startsWith('/')) return target.slice(1);
+    const parts = (baseDir + target).split('/');
+    const out = [];
+    parts.forEach(p => { if (p === '..') out.pop(); else if (p && p !== '.') out.push(p); });
+    return out.join('/');
+  }
+
+  // Zet een tabblad om naar rij-objecten (header-detectie, evt. gekanteld) en koppelt de foto's
+  // aan de rij/kolom waarin hun linkerbovenhoek staat.
+  const PHOTO_FALLBACK_COL = 'Foto';
+  function sheetToRows(wb, sheetName){
+    const ws = wb.Sheets[sheetName];
+    const range = ws && ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : {s:{r:0, c:0}};
+    let matrix = XLSX.utils.sheet_to_json(ws, {header: 1, defval: null, raw: true, blankrows: true});
+    const vertical = tableOrientation === 'verticaal';
+    if (vertical) matrix = transposeMatrix(matrix);
+    const imgByCell = new Map();
+    ((wb.__images || {})[sheetName] || []).forEach(({row, col, image}) => {
+      // matrix[r][c] komt overeen met bladcel (range.s.r + r, range.s.c + c); gekanteld andersom.
+      const r = vertical ? col - range.s.c : row - range.s.r;
+      const c = vertical ? row - range.s.r : col - range.s.c;
+      const key = r + ',' + c;
+      if (!imgByCell.has(key)) imgByCell.set(key, []);
+      imgByCell.get(key).push(image);
+    });
+    const headerIdx = findHeaderRowIndex(matrix);
+    const names = matrix.length ? buildHeaderNames(matrix[headerIdx]) : [];
+    const rows = [];
+    let usesFallbackCol = false;
+    for (let r = headerIdx + 1; r < matrix.length; r++){
+      const src = matrix[r] || [];
+      const cellImages = [];
+      imgByCell.forEach((imgs, key) => { if (+key.split(',')[0] === r) cellImages.push([+key.split(',')[1], imgs]); });
+      if (countFilled(src) === 0 && !cellImages.length) continue; // volledig lege regels overslaan
+      const obj = {};
+      names.forEach((nm, c) => {
+        const v = src[c];
+        obj[nm] = (v === undefined || v === '') ? null : v;
+      });
+      cellImages.forEach(([c, imgs]) => {
+        let colName = names[c];
+        if (!colName){ colName = PHOTO_FALLBACK_COL; usesFallbackCol = true; }
+        imgs.forEach(img => attachImage(obj, colName, img));
+      });
+      rows.push(obj);
+    }
+    if (usesFallbackCol) rows.forEach(o => { if (!(PHOTO_FALLBACK_COL in o)) o[PHOTO_FALLBACK_COL] = null; });
+    return rows;
   }
 
   function handleFile(file){
@@ -1525,26 +1672,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     currentSheet = name;
     showProgress(50, 'Rijen omzetten naar JSON...');
     nextTick(() => {
-      const ws = workbook.Sheets[name];
-      // Eerst als kale cellenmatrix inlezen (header:1) i.p.v. meteen objecten: dan kunnen we
-      // (a) verticale tabellen transponeren en (b) de headerrij zélf detecteren als die niet
-      // op regel 1 staat (bv. een titel- of lege regel erboven).
-      let matrix = XLSX.utils.sheet_to_json(ws, {header: 1, defval: null, raw: true});
-      if (tableOrientation === 'verticaal') matrix = transposeMatrix(matrix);
-      const headerIdx = findHeaderRowIndex(matrix);
-      const names = matrix.length ? buildHeaderNames(matrix[headerIdx]) : [];
-      const dataRows = [];
-      for (let r = headerIdx + 1; r < matrix.length; r++){
-        const src = matrix[r];
-        if (!src || countFilled(src) === 0) continue; // volledig lege regels overslaan
-        const obj = {};
-        names.forEach((nm, c) => {
-          const v = src[c];
-          obj[nm] = (v === undefined || v === '') ? null : v;
-        });
-        dataRows.push(obj);
-      }
-      rawRows = dataRows;
+      rawRows = sheetToRows(workbook, name);
       if (!rawRows.length){
         hideProgress();
         alert('Dit tabblad bevat geen data (of geen herkenbare headerrij).');
@@ -1580,6 +1708,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
               if (isAddrSub) visible = false;
               if (hiddenTechnical) visible = isBagOrUrl;
               if (isZoek) visible = false;
+              if (c.hasImages) visible = true;
 
               // Facet-defaults: huisnummer/huisletter zijn als filter nauteloos (bijna elke waarde
               // uniek), postcode juist een handig filter; technische/interne velden hierboven zijn
@@ -1907,7 +2036,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         suggestFacetType = 'presence';
       }
 
+      let imageCount = 0;
+      for (const r of rows){ const m = rowImages(r); if (m && m[name] && m[name].length) imageCount++; }
+      const hasImages = imageCount > 0;
+      if (hasImages && nonNull === 0){
+        // Pure fotokolom: alleen "met/zonder foto" is een zinvol filter.
+        suggestFacet = imageCount < n;
+        suggestFacetType = 'presence';
+      }
+
       return {
+        hasImages, imageCount,
         name, type, uniqueCount, sample, nonNull, suggestFacet, suggestFacetType, suggestMulti, suggestParts, suggestBagLink,
         suggestUrlLink, suggestEmail, suggestEnergyLabel, suggestFinancial, suggestSearchable, rangePreset,
         highCardinality: uniqueCount > HIGH_CARDINALITY_UNIQUE_MIN && (uniqueCount / n) > HIGH_CARDINALITY_RATIO_MIN,
@@ -2563,6 +2702,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       importRows.forEach(row => {
         const mapped = {};
         existingKeys.forEach(k => { mapped[k] = row[k] !== undefined ? row[k] : null; });
+        Object.keys(row).forEach(k => { if (!(k in mapped)) mapped[k] = row[k]; });
+        copyImages(row, mapped);
         const fp = rowFingerprint(mapped, sharedKeys);
         if (fingerprints.has(fp)){
           skipped++;
@@ -2596,6 +2737,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         const match = k !== null ? importIndex.get(k) : null;
         if (match){
           newCols.forEach(col => { row[col] = match[col] !== undefined ? match[col] : null; });
+          copyImages(match, row, newCols);
           matched++;
         } else {
           newCols.forEach(col => { row[col] = null; });
@@ -2610,7 +2752,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         columns.forEach(c => {
           if (!fieldConfig[c.name]){
             fieldConfig[c.name] = {
-              searchable: !!c.suggestSearchable, facet: !!c.suggestFacet, visible: c.category !== 'identificatie',
+              searchable: !!c.suggestSearchable, facet: !!c.suggestFacet, visible: c.category !== 'identificatie' || !!c.hasImages,
               facetType: c.suggestFacetType, splitDelimiter: ',', renderAsBagLink: !!c.suggestBagLink,
               renderAsUrlLink: !!c.suggestUrlLink, showAsCurrency: !!c.suggestFinancial,
               showAsEnergyLabel: !!c.suggestEnergyLabel, customGroup: '', groupLevel: null, rowGroupLevel: null
@@ -2639,7 +2781,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       columns.forEach(c => {
         if (!fieldConfig[c.name]){
           fieldConfig[c.name] = {
-            searchable: !!c.suggestSearchable, facet: !!c.suggestFacet, visible: c.category !== 'identificatie',
+            searchable: !!c.suggestSearchable, facet: !!c.suggestFacet, visible: c.category !== 'identificatie' || !!c.hasImages,
             facetType: c.suggestFacetType, splitDelimiter: ',', renderAsBagLink: !!c.suggestBagLink,
             renderAsUrlLink: !!c.suggestUrlLink, showAsCurrency: !!c.suggestFinancial,
             showAsEnergyLabel: !!c.suggestEnergyLabel, customGroup: '', groupLevel: null, rowGroupLevel: null
@@ -2685,23 +2827,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           alert('Kon dit bestand niet lezen: ' + err.message);
           return;
         }
-        const sheetName = importWb.SheetNames[0];
-        const ws = importWb.Sheets[sheetName];
-        let matrix = XLSX.utils.sheet_to_json(ws, {header: 1, defval: null, raw: true});
-        if (tableOrientation === 'verticaal') matrix = transposeMatrix(matrix);
-        const headerIdx = findHeaderRowIndex(matrix);
-        const names = matrix.length ? buildHeaderNames(matrix[headerIdx]) : [];
-        const newRows = [];
-        for (let r = headerIdx + 1; r < matrix.length; r++){
-          const src = matrix[r];
-          if (!src || countFilled(src) === 0) continue;
-          const obj = {};
-          names.forEach((nm, c) => {
-            const v = src[c];
-            obj[nm] = (v === undefined || v === '') ? null : v;
-          });
-          newRows.push(obj);
-        }
+        const newRows = sheetToRows(importWb, importWb.SheetNames[0]);
         if (!newRows.length){
           hideProgress();
           alert('Het extra bestand bevat geen data.');
@@ -2913,6 +3039,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const cfg = fieldConfig[field];
     const raw = row[field];
     if (cfg.facetType === 'presence'){
+      const imgs = rowImages(row);
+      const hasImg = !!(imgs && imgs[field] && imgs[field].length);
+      const col = getColumn(field);
+      if (col && col.hasImages) return [hasImg ? 'Met foto' : 'Zonder foto'];
       const empty = raw === null || raw === undefined || raw === '';
       return [empty ? 'Leeg' : 'Ingevuld'];
     }
@@ -3549,6 +3679,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // energielabels, gewone getallen, ja/nee) krijgen een compacte breedte; het samengestelde adres
   // en overige tekstkolommen krijgen ruimte naar rato van hun naam/voorbeeldwaarde-lengte.
   function computeColumnWidthPx(c, cfg){
+    if (c.hasImages && !c.nonNull) return 130;
     if (cfg && cfg.showAsEnergyLabel) return 90;
     if (c.rangePreset) return 100; // bouwjaar-achtige periodekolommen: 4-cijferig jaartal
     if (c.type === 'boolean') return 80;
@@ -3731,7 +3862,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
 
   // Bouwt de innerHTML voor één celwaarde (bag-link / energielabel-badge / gewone tekst met highlighting).
+  const BROWSER_IMAGE_EXT = /^(png|jpe?g|gif|bmp|webp)$/;
+  function photosHtml(row, colName){
+    const map = rowImages(row);
+    const imgs = map && map[colName];
+    if (!imgs || !imgs.length) return '';
+    return '<span class="cell-photos">' + imgs.map(img => BROWSER_IMAGE_EXT.test(img.ext)
+      ? `<img class="cell-thumb" src="${escapeAttr(img.url)}" alt="${escapeAttr(img.descr || img.fileName)}" title="${escapeAttr(img.descr || img.fileName)}" loading="lazy">`
+      : `<span class="cell-photo-file" title="Dit afbeeldingsformaat kan de browser niet tonen">&#128247; ${escapeHtml(img.fileName)}</span>`
+    ).join('') + '</span>';
+  }
+
   function buildCellInnerHtml(v, col, cfg, tokens, row){
+    const photos = row && col ? photosHtml(row, col.name) : '';
+    const inner = buildCellValueHtml(v, col, cfg, tokens, row);
+    return photos ? photos + (inner ? '<div>' + inner + '</div>' : '') : inner;
+  }
+
+  function buildCellValueHtml(v, col, cfg, tokens, row){
     const text = cellDisplayText(v, cfg);
     const energyStyle = (text && cfg.showAsEnergyLabel) ? energyLabelStyle(v) : null;
     if (text && cfg.renderAsBagLink && looksLikeBagId(v)){
@@ -4338,10 +4486,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   miExportPerRow.addEventListener('click', () => {
     closeMenus();
-    const n = getFilteredRows().length;
-    perRowCount.textContent = n + ' rij' + (n !== 1 ? 'en' : '') + ' worden geëxporteerd.';
+    const filtered = getFilteredRows();
+    const n = filtered.length;
+    let photos = 0;
+    filtered.forEach(r => { const m = rowImages(r); if (m) Object.values(m).forEach(list => { photos += list.length; }); });
+    perRowCount.textContent = n + ' rij' + (n !== 1 ? 'en' : '') + ' worden geëxporteerd' +
+      (photos ? ', plus ' + photos + ' foto' + (photos !== 1 ? "'s" : '') + ' als losse bestanden ernaast.' : '.');
     const prev = perRowNameField.value;
-    const guessCol = columns.find(c => /naam|name|vve|titel|title/i.test(c.name))
+    const guessCol = columns.find(c => /naam|name|vve|titel|title|label|omschrijving/i.test(c.name))
       || columns.find(c => /adres|address/i.test(c.name));
     const guess = guessCol ? guessCol.name : '';
     perRowNameField.innerHTML = '<option value="">(alleen volgnummer)</option>' +
@@ -4429,6 +4581,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     closePerRowDialog();
     const layout = document.querySelector('input[name="perRowLayout"]:checked').value;
     const rows = buildExportRows();
+    const sourceRows = getFilteredRows(); // zelfde volgorde als rows; draagt de foto's
     const colNames = columns.map(c => c.name);
     const baseName = sanitizeBaseName(currentSheet || sourceFileName || 'data');
     const nameField = perRowNameField.value;
@@ -4436,6 +4589,33 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const files = [];
     for (let i = 0; i < rows.length; i++){
       const row = rows[i];
+      let fname = '';
+      if (nameField && row[nameField] !== null && row[nameField] !== undefined){
+        const raw = row[nameField] instanceof Date ? row[nameField].toLocaleDateString('nl-NL') : String(row[nameField]);
+        fname = raw.replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
+      }
+      if (!fname) fname = String(i + 1).padStart(String(rows.length).length, '0');
+      const seen = usedNames.get(fname.toLowerCase()) || 0;
+      usedNames.set(fname.toLowerCase(), seen + 1);
+      if (seen) fname += ' (' + (seen + 1) + ')';
+
+      // Foto's komen als losse bestanden naast het Excel-bestand; de fotocel krijgt hun bestandsnaam.
+      const imgMap = rowImages(sourceRows[i]);
+      if (imgMap){
+        const all = [];
+        Object.keys(imgMap).forEach(col => imgMap[col].forEach(img => all.push([col, img])));
+        const photoNamesByCol = {};
+        all.forEach(([col, img], n) => {
+          const photoName = fname + (all.length > 1 ? ' (foto ' + (n + 1) + ')' : '') + '.' + img.ext;
+          files.push({name: baseName + '/' + photoName, data: img.bytes});
+          (photoNamesByCol[col] = photoNamesByCol[col] || []).push(photoName);
+        });
+        Object.keys(photoNamesByCol).forEach(col => {
+          const names = photoNamesByCol[col].join(', ');
+          row[col] = row[col] === null || row[col] === undefined || row[col] === '' ? names : row[col] + ' (' + names + ')';
+        });
+      }
+
       let ws;
       if (layout === 'vertical'){
         const aoa = colNames.map(k => [k, row[k] === null || row[k] === undefined ? '' : row[k]]);
@@ -4448,15 +4628,6 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Data');
       const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
-      let fname = '';
-      if (nameField && row[nameField] !== null && row[nameField] !== undefined){
-        const raw = row[nameField] instanceof Date ? row[nameField].toLocaleDateString('nl-NL') : String(row[nameField]);
-        fname = raw.replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
-      }
-      if (!fname) fname = String(i + 1).padStart(String(rows.length).length, '0');
-      const seen = usedNames.get(fname.toLowerCase()) || 0;
-      usedNames.set(fname.toLowerCase(), seen + 1);
-      if (seen) fname += ' (' + (seen + 1) + ')';
       files.push({name: baseName + '/' + fname + '.xlsx', data: new Uint8Array(wbout)});
     }
     const zipBlob = buildZip(files);
@@ -4482,7 +4653,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       rawRows,
       columns,
       fieldConfig,
-      themeProfile
+      themeProfile,
+      images: serializeRowImages(rawRows)
     };
     // Een sluitend script-tag in de data zou de HTML breken; elke "<" escapen naar < is
     // functioneel identiek in JSON-tekst maar bevat geen letterlijke "<" meer, dus geen risico
@@ -4521,6 +4693,29 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   });
 
+  function bytesToBase64(bytes){
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function base64ToBytes(b64){
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function serializeRowImages(rows){
+    const out = [];
+    rows.forEach((row, i) => {
+      const map = rowImages(row);
+      if (!map) return;
+      Object.keys(map).forEach(col => map[col].forEach(img => {
+        out.push({row: i, col, fileName: img.fileName, descr: img.descr, data: bytesToBase64(img.bytes)});
+      }));
+    });
+    return out;
+  }
+
   // Herstelt data + configuratie uit een eerder met "Opslaan als HTML" gedownload bestand.
   // Geeft true terug als er bruikbare data gevonden en hersteld is.
   function tryRestoreEmbeddedData(){
@@ -4556,6 +4751,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         }
       });
       return copy;
+    });
+    (payload.images || []).forEach(e => {
+      if (rawRows[e.row]) attachImage(rawRows[e.row], e.col, makeImage(base64ToBytes(e.data), e.fileName, e.descr));
     });
     return true;
   }
