@@ -113,6 +113,7 @@ Facetten tonen **live tellingen** die meebewegen met andere actieve filters (cro
 | | Bestand toevoegen... | Extra bestand samenvoegen met huidige data (zie *Bestand toevoegen*) |
 | | Opslaan als HTML | Download standalone HTML met data + config erin |
 | | Export → Excel/CSV/JSON | Exporteert huidige (gefilterde) data |
+| | Excel per regel... | Exporteert elke (gefilterde) rij als apart .xlsx-bestand in een ZIP (zie *Excel per regel*) |
 | **Weergave** | Kolommen aanpassen | Terug naar configuratiescherm |
 | | Filters aanpassen | Zet facet-edit-modus aan |
 | | Opslaan | Alias voor "Opslaan als HTML" |
@@ -167,6 +168,17 @@ Slaat een complete kopie van de pagina op (`PRISTINE_HTML`, vastgelegd bij laden
 - **CSV**: met UTF-8 BOM (zodat Excel NL-tekens goed leest)
 - **JSON**: pretty-printed
 - Exporteert altijd de **gefilterde** rijen
+
+### Excel per regel
+
+Via **Bestand → Excel per regel...** wordt elke gefilterde rij als apart `.xlsx`-bestand geëxporteerd, gebundeld in een ZIP-download. Een dialog biedt twee layout-opties:
+
+| Layout | Structuur |
+|--------|-----------|
+| **Horizontaal** | Veldnamen in rij 1, waarden in rij 2 (standaard tabelformaat) |
+| **Verticaal** | Veldnamen in kolom A, waarden in kolom B (key-value kaart) |
+
+De bestanden worden genummerd (`001.xlsx`, `002.xlsx`, ...) en krijgen indien mogelijk een herkenbare naam uit een kolom met naam/adres/titel. De ZIP wordt client-side opgebouwd met een inline ZIP-builder (`buildZip`, `crc32`) — geen externe library nodig.
 
 ## Kleurprofielen (`THEME_PROFILES`)
 
