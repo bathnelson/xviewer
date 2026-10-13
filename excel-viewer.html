@@ -870,6 +870,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   #viewerScreen table.data th.vast-rand, #viewerScreen table.data td.vast-rand{
     border-right:2px solid #9aa3ad;
   }
+  .facet-volgorde{display:none;gap:2px;margin-left:auto;margin-right:6px;}
+  #facetPanel.edit-mode .facet-volgorde{display:inline-flex;}
+  .facet-volgorde button{
+    border:1px solid var(--border);background:#fff;color:var(--text-muted);
+    border-radius:3px;line-height:1;font-size:9px;padding:2px 4px;cursor:pointer;
+  }
+  .facet-volgorde button:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent);}
   .freeze-wrap{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);}
   .freeze-wrap select{font:inherit;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:#fff;}
   #emptyFilterMenu label{display:flex;align-items:center;gap:6px;padding:3px 8px;cursor:pointer;white-space:nowrap;}
@@ -1320,6 +1327,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   let facetState = {};     // name -> Set of selected values/tokens, OR {min,max} for range facets
   let vasteKolommen = 0;   // aantal datakolommen dat blijft staan bij horizontaal scrollen
   let legeVerbergen = new Set();  // kolomnamen waarvan lege rijen verborgen worden
+  let facetVolgorde = [];  // eigen volgorde van de facetten in het paneel (veldnamen)
   let searchQuery = "";
   let configSearchQuery = "";
   let sortState = {col:null, dir:1};
@@ -3124,7 +3132,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           <div class="facet-supergroup-body"></div>
         `;
         const body = wrap.querySelector('.facet-supergroup-body');
-        g.cols.forEach(c => body.appendChild(createFacetGroupEl(c.name)));
+        sorteerFacetten(g.cols).forEach(c => body.appendChild(createFacetGroupEl(c.name)));
         wrap.querySelector('.facet-supergroup-header').addEventListener('click', () => {
           wrap.classList.toggle('collapsed');
         });
@@ -3133,6 +3141,39 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }
     renderAddFacetControl();
     fields.forEach(field => renderFacetBody(field));
+  }
+
+  // Facetten staan standaard in kolomvolgorde; met de pijltjes in de bewerkstand kun je ze
+  // binnen hun groep verplaatsen. facetVolgorde bewaart alleen wat je zelf hebt verzet.
+  function sorteerFacetten(cols){
+    return cols.slice().sort((a, b) => {
+      const ia = facetVolgorde.indexOf(a.name), ib = facetVolgorde.indexOf(b.name);
+      if (ia < 0 && ib < 0) return 0;
+      if (ia < 0) return 1;
+      if (ib < 0) return -1;
+      return ia - ib;
+    });
+  }
+
+  // Zet het facet een plek omhoog (-1) of omlaag (+1) binnen zijn eigen groep.
+  function verplaatsFacet(field, richting){
+    const activeCols = activeFacetFields().map(f => getColumn(f)).filter(Boolean);
+    const groepen = computeDisplayGroups(activeCols);
+    const groep = groepen.find(g => g.cols.some(c => c.name === field));
+    if (!groep) return;
+    const namen = sorteerFacetten(groep.cols).map(c => c.name);
+    const i = namen.indexOf(field), j = i + richting;
+    if (i < 0 || j < 0 || j >= namen.length) return;
+    namen[i] = namen[j]; namen[j] = field;
+    // De hele groep vastleggen, zodat de volgorde ook klopt voor facetten die nog nooit verzet zijn.
+    facetVolgorde = facetVolgorde.filter(n => !namen.includes(n)).concat(namen);
+    buildFacetPanel();
+    const el = facetGroups.querySelector(`.facet-group[data-field="${cssEscape(field)}"] .facet-omhoog`);
+    if (el) el.focus();
+  }
+
+  function cssEscape(v){
+    return (window.CSS && CSS.escape) ? CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&');
   }
 
   function createFacetGroupEl(field){
@@ -3145,6 +3186,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     group.innerHTML = `
       <div class="facet-title">
         <span>${escapeHtml(field)}</span>
+        <span class="facet-volgorde">
+          <button type="button" class="facet-omhoog" title="Facet omhoog">&#9650;</button>
+          <button type="button" class="facet-omlaag" title="Facet omlaag">&#9660;</button>
+        </span>
         <span class="chevron">&#9660;</span>
       </div>
       <div class="facet-controls">
@@ -3155,8 +3200,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       </div>
       <div class="facet-body" data-field="${escapeAttr(field)}"></div>
     `;
-    group.querySelector('.facet-title').addEventListener('click', () => {
+    group.querySelector('.facet-title').addEventListener('click', (e) => {
+      if (e.target.closest('.facet-volgorde')) return;   // pijltjes klappen het facet niet in
       group.classList.toggle('collapsed');
+    });
+    group.querySelector('.facet-omhoog').addEventListener('click', (e) => {
+      e.stopPropagation(); verplaatsFacet(field, -1);
+    });
+    group.querySelector('.facet-omlaag').addEventListener('click', (e) => {
+      e.stopPropagation(); verplaatsFacet(field, 1);
     });
     const typeSelect = group.querySelector('.facet-type-select');
     if (typeSelect){
@@ -4935,6 +4987,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       columns,
       fieldConfig,
       themeProfile,
+      facetVolgorde,
+      vasteKolommen,
+      legeVerbergen: [...legeVerbergen],
       images: serializeRowImages(rawRows)
     };
     // Een sluitend script-tag in de data zou de HTML breken; elke "<" escapen naar < is
@@ -5019,6 +5074,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     columns = payload.columns;
     fieldConfig = payload.fieldConfig;
     if (payload.themeProfile) applyThemeProfile(payload.themeProfile);
+    if (Array.isArray(payload.facetVolgorde)) facetVolgorde = payload.facetVolgorde;
+    if (typeof payload.vasteKolommen === 'number') vasteKolommen = payload.vasteKolommen;
+    if (Array.isArray(payload.legeVerbergen)) legeVerbergen = new Set(payload.legeVerbergen);
     // JSON kent geen Date-type: datumvelden komen terug als ISO-tekst en moeten weer Date
     // worden, anders werken datum-opmaak/-sortering/-facetten niet meer zoals voor het opslaan.
     const dateFieldNames = columns.filter(c => c.type === 'datum').map(c => c.name);
