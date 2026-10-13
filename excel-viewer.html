@@ -861,6 +861,21 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     left:0;
     z-index:1;
   }
+  /* Vastgezette kolommen: blijven staan bij horizontaal scrollen. */
+  #viewerScreen table.data th.vast{position:sticky;z-index:4;background:var(--xl-header-bg);}
+  #viewerScreen table.data td.vast{position:sticky;z-index:2;background:#fff;}
+  #viewerScreen table.data tr:hover td.vast{background:#eef6f1;}
+  #viewerScreen table.data tr.row-selected td.vast{background:var(--xl-select);}
+  #viewerScreen table.data tr.group-row td.vast{background:#eef0f2;}
+  #viewerScreen table.data th.vast-rand, #viewerScreen table.data td.vast-rand{
+    border-right:2px solid #9aa3ad;
+  }
+  .freeze-wrap{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);}
+  .freeze-wrap select{font:inherit;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:#fff;}
+  #emptyFilterMenu label{display:flex;align-items:center;gap:6px;padding:3px 8px;cursor:pointer;white-space:nowrap;}
+  #emptyFilterMenu label:hover{background:var(--accent-light);}
+  #emptyFilterMenu .menu-kop{padding:6px 8px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border);}
+  #emptyFilterMenu .menu-voet{padding:6px 8px;border-top:1px solid var(--border);}
   #viewerScreen td.rownum-col{cursor:pointer;}
   #viewerScreen td.rownum-col:hover{background:var(--xl-header-hover);}
   #viewerScreen aside#facetPanel{border:1px solid var(--xl-grid);}
@@ -1242,6 +1257,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             <button class="small" id="btnColumns">Kolommen &#9662;</button>
             <div class="col-toggle-menu" id="colToggleMenu"></div>
           </div>
+          <label class="freeze-wrap" title="Houd de eerste kolommen in beeld als je naar rechts scrolt">
+            Vast:
+            <select id="freezeCols"></select>
+          </label>
+          <div class="col-toggle-wrap">
+            <button class="small" id="btnEmptyFilter" title="Verberg rijen die in een kolom leeg zijn">Lege verbergen &#9662;</button>
+            <div class="col-toggle-menu" id="emptyFilterMenu"></div>
+          </div>
         </div>
         <div class="active-filters" id="activeFilters"></div>
         <div class="table-wrap">
@@ -1295,6 +1318,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   let columns = [];        // [{name, type, uniqueCount, sample, numMin, numMax, suggestMulti}]
   let fieldConfig = {};    // name -> {searchable, facet, visible, facetType: 'values'|'range'|'multi', splitDelimiter}
   let facetState = {};     // name -> Set of selected values/tokens, OR {min,max} for range facets
+  let vasteKolommen = 0;   // aantal datakolommen dat blijft staan bij horizontaal scrollen
+  let legeVerbergen = new Set();  // kolomnamen waarvan lege rijen verborgen worden
   let searchQuery = "";
   let configSearchQuery = "";
   let sortState = {col:null, dir:1};
@@ -1384,6 +1409,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const facetPanel = document.getElementById('facetPanel');
   const btnColumns = document.getElementById('btnColumns');
   const colToggleMenu = document.getElementById('colToggleMenu');
+  const freezeCols = document.getElementById('freezeCols');
+  const btnEmptyFilter = document.getElementById('btnEmptyFilter');
+  const emptyFilterMenu = document.getElementById('emptyFilterMenu');
   const progressOverlay = document.getElementById('progressOverlay');
   const progressLabel = document.getElementById('progressLabel');
   const progressBarFill = document.getElementById('progressBarFill');
@@ -3320,7 +3348,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function computeFilterContext(){
     const cache = computeFacetMatchArraysCached();
     const {fields, arrays} = cache;
-    const key = cache.key + '¦q:' + searchQuery + '¦si:' + searchIndexGeneration;
+    const key = cache.key + '¦q:' + searchQuery + '¦si:' + searchIndexGeneration
+      + '¦leeg:' + [...legeVerbergen].sort().join(',');
     if (filterContextCache.key === key && filterContextCache.rowsRef === rawRows) return filterContextCache.ctx;
     const n = rawRows.length;
     const tokens = currentSearchTokens();
@@ -3343,7 +3372,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       }
       failCount[i] = fc;
       if (fc === 1) failField[i] = firstFail;
-      if (sm && fc === 0) filteredRows.push(row);
+      if (sm && fc === 0 && rowMatchesLegeFilter(row)) filteredRows.push(row);
     }
     const ctx = {searchMatch, failCount, failField, filteredRows};
     filterContextCache = {key, ctx, rowsRef: rawRows};
@@ -3794,6 +3823,20 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return rowMatchesSearchTokens(row, currentSearchTokens());
   }
 
+  // Lege-waardenfilter: een rij valt af zodra een van de gekozen kolommen leeg is.
+  function heeftWaarde(v){
+    if (v === null || v === undefined) return false;
+    if (v instanceof Date) return true;
+    return String(v).trim() !== '';
+  }
+  function rowMatchesLegeFilter(row){
+    if (!legeVerbergen.size) return true;
+    for (const naam of legeVerbergen){
+      if (!heeftWaarde(row[naam])) return false;
+    }
+    return true;
+  }
+
   function matchesAllFacets(row){
     for (const field of activeFacetFields()){
       if (!rowMatchesFacet(row, field)) return false;
@@ -3840,6 +3883,31 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return Math.max(110, Math.min(300, Math.round(guess)));
   }
 
+  let vasteOffsets = [];   // linkerpositie (px) per vastgezette kolom
+
+  function zetVast(el, i){
+    if (i >= vasteKolommen) return;
+    el.classList.add('vast');
+    if (i === vasteKolommen - 1) el.classList.add('vast-rand');
+    el.style.left = vasteOffsets[i] + 'px';
+  }
+
+  // Dezelfde opmaak, maar dan als attributen voor de rij-HTML die als string wordt gebouwd.
+  function vastAttr(i){
+    if (i >= vasteKolommen) return '';
+    const rand = i === vasteKolommen - 1 ? ' vast-rand' : '';
+    return ` class="vast${rand}" style="left:${vasteOffsets[i]}px"`;
+  }
+
+  function vulFreezeKeuze(aantalKolommen){
+    const max = Math.min(5, aantalKolommen);
+    const huidig = String(vasteKolommen);
+    let opties = '<option value="0">geen</option>';
+    for (let i = 1; i <= max; i++) opties += `<option value="${i}">${i} kolom${i === 1 ? '' : 'men'}</option>`;
+    if (freezeCols.innerHTML !== opties) freezeCols.innerHTML = opties;
+    freezeCols.value = huidig;
+  }
+
   function buildTableHead(){
     tableHeadRow.innerHTML = '';
     colLetterRow.innerHTML = '';
@@ -3872,6 +3940,18 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     // expliciete breedte persen veel kolommen zich in de schermbreedte en breken woorden per letter.
     dataTable.style.width = totalWidth + 'px';
 
+    // Vastgezette kolommen: de linkerpositie van elke kolom is de som van de breedtes ervoor.
+    vasteKolommen = Math.min(vasteKolommen, visibleCols.length);
+    vasteOffsets = [];
+    if (vasteKolommen > 0){
+      let links = 40 + (grouping ? 240 : 0);
+      for (let i = 0; i < vasteKolommen; i++){
+        vasteOffsets.push(links);
+        links += computeColumnWidthPx(visibleCols[i], fieldConfig[visibleCols[i].name]);
+      }
+    }
+    vulFreezeKeuze(visibleCols.length);
+
     const letterCorner = document.createElement('th');
     letterCorner.className = 'corner-cell';
     colLetterRow.appendChild(letterCorner);
@@ -3882,6 +3962,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     visibleCols.forEach((c, i) => {
       const th = document.createElement('th');
       th.textContent = colLetters(i);
+      zetVast(th, i);
       colLetterRow.appendChild(th);
     });
 
@@ -3896,10 +3977,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       th.title = 'Aantal rijen in de groep';
       tableHeadRow.appendChild(th);
     }
-    visibleCols.forEach(c => {
+    visibleCols.forEach((c, i) => {
       const th = document.createElement('th');
       th.textContent = c.name;
       th.title = c.name; // volledige naam als tooltip, want de kolom kan smaller zijn dan de naam lang is
+      zetVast(th, i);
       th.addEventListener('click', () => {
         if (sortState.col === c.name) sortState.dir *= -1;
         else { sortState.col = c.name; sortState.dir = 1; }
@@ -3908,6 +3990,57 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       tableHeadRow.appendChild(th);
     });
   }
+
+  // ---------- Kolommen vastzetten ----------
+  freezeCols.addEventListener('change', () => {
+    vasteKolommen = parseInt(freezeCols.value, 10) || 0;
+    buildTableHead();   // de koppen krijgen hun linkerposities hier, dus opnieuw opbouwen
+    renderResults();
+  });
+
+  // ---------- Lege waarden verbergen ----------
+  function renderEmptyFilterMenu(){
+    const cols = getDisplayColumns();
+    let html = '<div class="menu-kop">Verberg rijen die leeg zijn in:</div>';
+    cols.forEach(c => {
+      const aan = legeVerbergen.has(c.name) ? ' checked' : '';
+      html += `<label><input type="checkbox" data-kolom="${escapeAttr(c.name)}"${aan}> ${escapeHtml(c.name)}</label>`;
+    });
+    html += '<div class="menu-voet"><button type="button" class="small" id="btnLeegWissen">Alles tonen</button></div>';
+    emptyFilterMenu.innerHTML = html;
+  }
+  function werkLeegKnopBij(){
+    const n = legeVerbergen.size;
+    btnEmptyFilter.textContent = (n ? `Lege verbergen (${n})` : 'Lege verbergen') + ' \u25BE';
+    btnEmptyFilter.classList.toggle('actief-filter', n > 0);
+  }
+  btnEmptyFilter.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = !emptyFilterMenu.classList.contains('open');
+    emptyFilterMenu.classList.toggle('open', willOpen);
+    if (willOpen) renderEmptyFilterMenu();
+  });
+  emptyFilterMenu.addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    const naam = cb.getAttribute('data-kolom');
+    if (cb.checked) legeVerbergen.add(naam); else legeVerbergen.delete(naam);
+    werkLeegKnopBij();
+    renderResults();
+  });
+  emptyFilterMenu.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'btnLeegWissen'){
+      legeVerbergen.clear();
+      renderEmptyFilterMenu();
+      werkLeegKnopBij();
+      renderResults();
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (emptyFilterMenu.classList.contains('open') && !emptyFilterMenu.contains(e.target) && e.target !== btnEmptyFilter){
+      emptyFilterMenu.classList.remove('open');
+    }
+  });
 
   // ---------- Column visibility toggle ----------
   btnColumns.addEventListener('click', (e) => {
@@ -4053,7 +4186,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const c = visibleCols[i];
       const v = row[c.name];
       const cfg = fieldConfig[c.name];
-      out += `<td title="${escapeAttr(cellDisplayText(v, cfg))}">${buildCellInnerHtml(v, c, cfg, tokens, row)}</td>`;
+      out += `<td${vastAttr(i)} title="${escapeAttr(cellDisplayText(v, cfg))}">${buildCellInnerHtml(v, c, cfg, tokens, row)}</td>`;
     }
     return out;
   }
@@ -4171,9 +4304,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       // voor ALLE zichtbare groepsrijen alles opnieuw verzameld en herberekend.
       let labelPlaced = false;
       let cellsHtml = '';
-      visibleCols.forEach(c => {
+      visibleCols.forEach((c, kolIdx) => {
         if (c.name === node.field){
-          cellsHtml += `<td title="${escapeAttr(child.key)}"><span class="group-label" style="padding-left:${depth*14}px">${escapeHtml(child.key)}</span></td>`;
+          cellsHtml += `<td${vastAttr(kolIdx)} title="${escapeAttr(child.key)}"><span class="group-label" style="padding-left:${depth*14}px">${escapeHtml(child.key)}</span></td>`;
           labelPlaced = true;
         } else {
           if (!child._aggCache) child._aggCache = new Map();
@@ -4181,7 +4314,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             if (!child._leafRowsCache) child._leafRowsCache = collectLeafRows(child.node, []);
             child._aggCache.set(c.name, computeGroupCellHtml(child._leafRowsCache, c, tokens));
           }
-          cellsHtml += `<td>${child._aggCache.get(c.name)}</td>`;
+          cellsHtml += `<td${vastAttr(kolIdx)}>${child._aggCache.get(c.name)}</td>`;
         }
       });
       // Fallback: groepeerkolom zelf niet zichtbaar - toon de sleutel dan in de Aantal-cel.
