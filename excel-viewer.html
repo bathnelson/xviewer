@@ -1335,6 +1335,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   let legeVerbergen = new Set();  // kolomnamen waarvan lege rijen verborgen worden
   let facetVolgorde = [];  // eigen volgorde van de facetten in het paneel (veldnamen)
   let facetGroepVolgorde = [];  // eigen volgorde van de groepen (kopjes) in het paneel
+  let viewerNaam = '';     // bestandsnaam van een opgeslagen viewer, voor titel en kop
   let searchQuery = "";
   let configSearchQuery = "";
   let sortState = {col:null, dir:1};
@@ -2710,7 +2711,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             buildTableHead();
             renderResults();
             switchScreen('viewer');
-            headerSub.textContent = currentSheet + ' · ' + rawRows.length.toLocaleString('nl-NL') + ' rijen geladen (lokaal, geen server)';
+            headerSub.textContent = (viewerNaam ? viewerNaam + ' · ' : '') + currentSheet + ' · ' + rawRows.length.toLocaleString('nl-NL') + ' rijen geladen (lokaal, geen server)';
             setDataMenuAvailable(true);
             updateProgress(100, 'Klaar');
             setTimeout(hideProgress, 200);
@@ -2969,7 +2970,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         alert(msg + skipMsg + newColMsg + '\n\nEr zijn nieuwe kolommen — pas de weergave aan en klik op "Toepassen & bekijken".');
       } else {
         buildViewerFromConfig();
-        headerSub.textContent = currentSheet + ' · ' + rawRows.length.toLocaleString('nl-NL') + ' rijen';
+        headerSub.textContent = (viewerNaam ? viewerNaam + ' · ' : '') + currentSheet + ' · ' + rawRows.length.toLocaleString('nl-NL') + ' rijen';
         alert(msg + skipMsg + '\nTotaal: ' + rawRows.length.toLocaleString('nl-NL') + ' rijen');
       }
     });
@@ -5060,10 +5061,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // Bouwt de volledige, standalone HTML-string voor "Opslaan als HTML": de bij het opstarten
   // vastgelegde schone paginakopie (PRISTINE_HTML, dus incl. de ingebedde xlsx-library), met de
   // huidige data + configuratie ingevoegd in het #embeddedData-scriptje.
+  // Naam waaronder een opgeslagen viewer wordt gedownload; ook de titel van dat bestand.
+  function opgeslagenBestandsnaam(){
+    return sanitizeBaseName(sourceFileName) + '_viewer.html';
+  }
+
   function buildConfiguredHtmlString(){
     const payload = {
       version: 1,
       savedAt: new Date().toISOString(),
+      viewerNaam: opgeslagenBestandsnaam().replace(/\.html$/i, ''),
       sourceFileName,
       currentSheet,
       rawRows,
@@ -5080,13 +5087,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     // functioneel identiek in JSON-tekst maar bevat geen letterlijke "<" meer, dus geen risico
     // op een voortijdig gesloten script-element.
     const json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    const titel = escapeHtml(payload.viewerNaam) + ' &mdash; Excel Viewer';
+    const titelRe = /<title>[\s\S]*?<\/title>/;
     const re = /(<script id="embeddedData"[^>]*>)([\s\S]*?)(<\/script>)/;
     if (!re.test(PRISTINE_HTML)){
       throw new Error('embeddedData-placeholder niet gevonden in het HTML-sjabloon');
     }
     // Vervangfunctie i.p.v. vervang-string: voorkomt dat een toevallige "$1"/"$&" in de data
     // door String.replace als terugverwijzing wordt geïnterpreteerd.
-    const html = PRISTINE_HTML.replace(re, (m, open, _old, close) => open + json + close);
+    let html = PRISTINE_HTML.replace(re, (m, open, _old, close) => open + json + close);
+    // Titel meegeven, zodat elk opgeslagen bestand herkenbaar is in tabblad en favorieten.
+    html = html.replace(titelRe, () => '<title>' + titel + '</title>');
     return PRISTINE_DOCTYPE + '\n' + html;
   }
 
@@ -5105,7 +5116,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = sanitizeBaseName(sourceFileName) + '_viewer.html';
+      a.download = opgeslagenBestandsnaam();
       a.click();
       URL.revokeObjectURL(url);
       updateProgress(100, 'Klaar');
@@ -5160,6 +5171,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (payload.themeProfile) applyThemeProfile(payload.themeProfile);
     if (Array.isArray(payload.facetVolgorde)) facetVolgorde = payload.facetVolgorde;
     if (Array.isArray(payload.facetGroepVolgorde)) facetGroepVolgorde = payload.facetGroepVolgorde;
+    // De bestandsnaam zoals hij nu op schijf staat wint: hernoem je het bestand, dan volgt de titel.
+    let uitPad = '';
+    try {
+      uitPad = decodeURIComponent((location.pathname.split('/').pop() || '')).replace(/\.html?$/i, '');
+    } catch(err){ uitPad = ''; }
+    viewerNaam = (uitPad && uitPad.toLowerCase() !== 'excel-viewer') ? uitPad : (payload.viewerNaam || '');
+    if (viewerNaam) document.title = viewerNaam + ' \u2014 Excel Viewer';
     if (typeof payload.vasteKolommen === 'number') vasteKolommen = payload.vasteKolommen;
     if (Array.isArray(payload.legeVerbergen)) legeVerbergen = new Set(payload.legeVerbergen);
     // JSON kent geen Date-type: datumvelden komen terug als ISO-tekst en moeten weer Date
