@@ -891,6 +891,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     text-decoration:none;
   }
   a.bag-link:hover, a.derived-link:hover{text-decoration:underline;}
+  a.link-knop{
+    display:inline-block;padding:1px 7px;border:1px solid var(--border);border-radius:3px;
+    background:var(--accent-light);color:var(--accent);text-decoration:none;font-size:11px;white-space:nowrap;
+  }
+  a.link-knop:hover{background:var(--accent);color:#fff;border-color:var(--accent);}
 
   /* --- Progress overlay --- */
   .progress-overlay{
@@ -1946,6 +1951,31 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // Herkent waarden die er als een URL uitzien (http(s)://... of www....), zodat we ze klikbaar
   // kunnen maken - net als BAG-ID's, maar dan voor bv. website- of brondocument-kolommen.
   const URL_RE = /^(https?:\/\/|www\.)\S+\.\S+$/i;
+  // Hoe een link-kolom in de tabel getoond wordt. 'volledig' is wat het altijd was.
+  const URL_WEERGAVEN = [
+    {value:'volledig', label:'de hele link'},
+    {value:'knop',     label:'een knopje'},
+    {value:'domein',   label:'alleen de site'}
+  ];
+  function urlWeergaveVan(field){
+    const cfg = fieldConfig[field];
+    const v = cfg && cfg.urlWeergave;
+    return URL_WEERGAVEN.some(o => o.value === v) ? v : 'volledig';
+  }
+  // Korte tekst voor een link: de sitenaam, of een knoplabel op basis van de kolomnaam.
+  function linkKorteTekst(url, weergave, kolomnaam){
+    if (weergave === 'knop'){
+      const n = String(kolomnaam || '').toLowerCase();
+      if (n.includes('dossier') || n.includes('map')) return 'Dossier';
+      return 'Openen';
+    }
+    try {
+      return new URL(url).hostname.replace(/^www\./, '');
+    } catch(err){
+      return String(url).replace(/^https?:\/\//, '').split('/')[0] || 'link';
+    }
+  }
+
   function looksLikeUrl(raw){
     if (typeof raw !== 'string') return false;
     const s = raw.trim();
@@ -2424,6 +2454,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const extraToggles = [];
     if (c.suggestBagLink) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="renderAsBagLink" ${fieldConfig[c.name].renderAsBagLink?'checked':''}> Toon als link naar BAG-viewer</label>`);
     if (c.suggestUrlLink) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="renderAsUrlLink" ${fieldConfig[c.name].renderAsUrlLink?'checked':''}> Toon als klikbare link</label>`);
+    if (c.suggestUrlLink) extraToggles.push(`<label class="meta-toggle" title="Hoe de link in de tabel wordt getoond">link toont
+      <select data-field="${escapeAttr(c.name)}" data-role="urlWeergave">
+        ${URL_WEERGAVEN.map(o => `<option value="${o.value}" ${urlWeergaveVan(c.name)===o.value?'selected':''}>${o.label}</option>`).join('')}
+      </select></label>`);
     if (c.suggestFinancial) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="showAsCurrency" ${fieldConfig[c.name].showAsCurrency?'checked':''}> Toon als bedrag (&euro;)</label>`);
     if (c.suggestEnergyLabel) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="showAsEnergyLabel" ${fieldConfig[c.name].showAsEnergyLabel?'checked':''}> Toon als energielabel-badge</label>`);
     tr.innerHTML = `
@@ -2566,6 +2600,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       sel.addEventListener('change', () => {
         const field = sel.getAttribute('data-field');
         fieldConfig[field].facetType = sel.value;
+      });
+    });
+    colConfigGroups.querySelectorAll('select[data-role="urlWeergave"]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        fieldConfig[sel.getAttribute('data-field')].urlWeergave = sel.value;
       });
     });
     // Groep/niveau reageren pas op 'change' (blur/enter) zodat de groepen niet tijdens het typen
@@ -3929,6 +3968,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (c.type === 'datum') return 110;
     if (c.type === 'getal') return (cfg && cfg.showAsCurrency) ? 120 : 90;
     if (cfg && cfg.renderAsBagLink) return 150;
+    if (cfg && cfg.renderAsUrlLink && urlWeergaveVan(c.name) === 'knop') return 90;
+    if (cfg && cfg.renderAsUrlLink && urlWeergaveVan(c.name) === 'domein') return 150;
     if (c.name === ADDRESS_FIELD_NAME) return 260; // samengesteld adres: ruimte voor straat+huisnr+postcode+plaats
     const sampleLen = c.sample != null ? String(c.sample).length : 0;
     const guess = Math.max(c.name.length, sampleLen) * 7 + 32;
@@ -4220,6 +4261,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       return `<a href="${escapeAttr(bagLinkUrl(id, row))}" target="_blank" rel="noopener noreferrer" class="bag-link">${highlightTokens(escapeHtml(text), tokens)} &#8599;</a>`;
     } else if (text && cfg.renderAsUrlLink && looksLikeUrl(v)){
       const url = normalizeUrl(v);
+      const weergave = urlWeergaveVan(col.name);
+      if (weergave !== 'volledig'){
+        const label = linkKorteTekst(url, weergave, col.name);
+        const klasse = weergave === 'knop' ? 'link-knop' : 'derived-link';
+        return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="${klasse}" title="${escapeAttr(url)}">${escapeHtml(label)} &#8599;</a>`;
+      }
       return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="derived-link">${highlightTokens(escapeHtml(text), tokens)} &#8599;</a>`;
     } else if (energyStyle){
       return `<span class="energy-badge" style="background:${energyStyle.bg};color:${energyStyle.fg};">${escapeHtml(energyStyle.key)}</span>`;
