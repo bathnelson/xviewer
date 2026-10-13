@@ -872,6 +872,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   .facet-volgorde{display:none;gap:2px;margin-left:auto;margin-right:6px;}
   #facetPanel.edit-mode .facet-volgorde{display:inline-flex;}
+  .groep-volgorde{margin-left:6px;margin-right:0;}
   .facet-volgorde button{
     border:1px solid var(--border);background:#fff;color:var(--text-muted);
     border-radius:3px;line-height:1;font-size:9px;padding:2px 4px;cursor:pointer;
@@ -1333,6 +1334,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   let vasteKolommen = 0;   // aantal datakolommen dat blijft staan bij horizontaal scrollen
   let legeVerbergen = new Set();  // kolomnamen waarvan lege rijen verborgen worden
   let facetVolgorde = [];  // eigen volgorde van de facetten in het paneel (veldnamen)
+  let facetGroepVolgorde = [];  // eigen volgorde van de groepen (kopjes) in het paneel
   let searchQuery = "";
   let configSearchQuery = "";
   let sortState = {col:null, dir:1};
@@ -3157,7 +3159,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       facetGroups.innerHTML = '<p class="muted-note">Geen facetten geconfigureerd. Voeg er hieronder een toe.</p>';
     } else {
       const activeCols = fields.map(f => getColumn(f)).filter(Boolean);
-      const displayGroups = computeDisplayGroups(activeCols);
+      const displayGroups = sorteerFacetGroepen(computeDisplayGroups(activeCols));
       displayGroups.forEach(g => {
         const wrap = document.createElement('div');
         const collapsedByDefault = !g.isCustom && CATEGORY_DEFAULT_COLLAPSED[g.catKey];
@@ -3167,13 +3169,25 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
             <span class="chevron">&#9660;</span>
             <span>${g.isCustom ? '&#128193; ' : ''}${escapeHtml(g.label)}</span>
             <span class="config-group-count">(${g.cols.length})</span>
+            <span class="facet-volgorde groep-volgorde">
+              <button type="button" class="groep-omhoog" title="Groep omhoog">&#9650;</button>
+              <button type="button" class="groep-omlaag" title="Groep omlaag">&#9660;</button>
+            </span>
           </div>
           <div class="facet-supergroup-body"></div>
         `;
         const body = wrap.querySelector('.facet-supergroup-body');
         sorteerFacetten(g.cols).forEach(c => body.appendChild(createFacetGroupEl(c.name)));
-        wrap.querySelector('.facet-supergroup-header').addEventListener('click', () => {
+        const kop = wrap.querySelector('.facet-supergroup-header');
+        kop.addEventListener('click', (e) => {
+          if (e.target.closest('.groep-volgorde')) return;   // pijltjes klappen de groep niet in
           wrap.classList.toggle('collapsed');
+        });
+        kop.querySelector('.groep-omhoog').addEventListener('click', (e) => {
+          e.stopPropagation(); verplaatsFacetGroep(groepSleutel(g), -1);
+        });
+        kop.querySelector('.groep-omlaag').addEventListener('click', (e) => {
+          e.stopPropagation(); verplaatsFacetGroep(groepSleutel(g), 1);
         });
         facetGroups.appendChild(wrap);
       });
@@ -3184,6 +3198,28 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   // Facetten staan standaard in kolomvolgorde; met de pijltjes in de bewerkstand kun je ze
   // binnen hun groep verplaatsen. facetVolgorde bewaart alleen wat je zelf hebt verzet.
+  function groepSleutel(g){
+    return g.isCustom ? 'eigen:' + g.label : 'cat:' + g.catKey;
+  }
+  function sorteerFacetGroepen(groepen){
+    return groepen.slice().sort((a, b) => {
+      const ia = facetGroepVolgorde.indexOf(groepSleutel(a)), ib = facetGroepVolgorde.indexOf(groepSleutel(b));
+      if (ia < 0 && ib < 0) return 0;
+      if (ia < 0) return 1;
+      if (ib < 0) return -1;
+      return ia - ib;
+    });
+  }
+  function verplaatsFacetGroep(sleutel, richting){
+    const activeCols = activeFacetFields().map(f => getColumn(f)).filter(Boolean);
+    const sleutels = sorteerFacetGroepen(computeDisplayGroups(activeCols)).map(groepSleutel);
+    const i = sleutels.indexOf(sleutel), j = i + richting;
+    if (i < 0 || j < 0 || j >= sleutels.length) return;
+    sleutels[i] = sleutels[j]; sleutels[j] = sleutel;
+    facetGroepVolgorde = sleutels;
+    buildFacetPanel();
+  }
+
   function sorteerFacetten(cols){
     return cols.slice().sort((a, b) => {
       const ia = facetVolgorde.indexOf(a.name), ib = facetVolgorde.indexOf(b.name);
@@ -5035,6 +5071,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       fieldConfig,
       themeProfile,
       facetVolgorde,
+      facetGroepVolgorde,
       vasteKolommen,
       legeVerbergen: [...legeVerbergen],
       images: serializeRowImages(rawRows)
@@ -5122,6 +5159,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     fieldConfig = payload.fieldConfig;
     if (payload.themeProfile) applyThemeProfile(payload.themeProfile);
     if (Array.isArray(payload.facetVolgorde)) facetVolgorde = payload.facetVolgorde;
+    if (Array.isArray(payload.facetGroepVolgorde)) facetGroepVolgorde = payload.facetGroepVolgorde;
     if (typeof payload.vasteKolommen === 'number') vasteKolommen = payload.vasteKolommen;
     if (Array.isArray(payload.legeVerbergen)) legeVerbergen = new Set(payload.legeVerbergen);
     // JSON kent geen Date-type: datumvelden komen terug als ISO-tekst en moeten weer Date
