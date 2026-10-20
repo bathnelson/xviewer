@@ -292,6 +292,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     border:1px solid var(--border);
     border-radius:10px;
   }
+  .header-row-select{
+    flex:1;
+    min-width:220px;
+    max-width:100%;
+    font-size:13px;
+    padding:6px 7px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    background:#fff;
+  }
   .theme-swatches{
     display:flex;
     gap:10px;
@@ -1223,6 +1233,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     <div class="config-intro">
       <h2>Configureer velden</h2>
       <p>Kies per kolom of deze doorzoekbaar is (vrije tekst), als facet-filter getoond wordt (en met welk filtertype), en/of zichtbaar is in de tabel. Velden zijn gegroepeerd per categorie; technische/id-achtige velden staan standaard ingeklapt en verborgen in de tabel. Met "Groep / niveau" maak je zelf een groepsindeling voor het filterpaneel. Dit is later ook aan te passen via het menu Weergave &gt; Kolommen aanpassen.</p>
+      <div class="theme-picker-config" id="headerRowConfig">
+        <div class="row-group-config-label">
+          <strong>Kolomnamen staan op</strong>
+          <span>Normaal herkent de viewer zelf welke regel de kolomkoppen bevat. Klopt dat niet, kies dan hier de juiste regel.</span>
+        </div>
+        <select id="headerRowSelect" class="header-row-select"></select>
+      </div>
       <div class="row-group-config">
         <div class="row-group-config-label">
           <strong>Rij-groepering in de tabel</strong>
@@ -1339,6 +1356,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   let searchQuery = "";
   let configSearchQuery = "";
   let sortState = {col:null, dir:1};
+  let headerRowChoice = null;  // door de gebruiker gekozen headerregel (index in de matrix); null = automatisch herkennen
+  let headerRowInfo = null;    // {idx, autoIdx, options} van het laatst ingelezen tabblad, voor de keuzelijst
   let tableOrientation = 'horizontaal'; // 'horizontaal' (veldnamen in rij 1) of 'verticaal' (veldnamen in kolom A, wordt getransponeerd)
   let currentPage = 1;
   let groupExpandedPaths = new Set(); // paden van uitgeklapte rij-groepen, bv. "VvE X␟blok Y"
@@ -1372,6 +1391,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   const themeSwatchesEl = document.getElementById('themeSwatches');
   const configSearchInput = document.getElementById('configSearchInput');
   const configRowCount = document.getElementById('configRowCount');
+  const headerRowConfigEl = document.getElementById('headerRowConfig');
+  const headerRowSelect = document.getElementById('headerRowSelect');
+  headerRowSelect.addEventListener('change', () => {
+    const idx = parseInt(headerRowSelect.value, 10);
+    headerRowChoice = (headerRowInfo && idx === headerRowInfo.autoIdx) ? null : idx;
+    showProgress(45, 'Opnieuw inlezen met nieuwe kolomnamen...');
+    nextTick(() => loadSheet(currentSheet));
+  });
   const btnApplyConfig = document.getElementById('btnApplyConfig');
   const facetGroups = document.getElementById('facetGroups');
   const searchInput = document.getElementById('searchInput');
@@ -1649,7 +1676,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function isExcelErrorValue(v){
     return typeof v === 'string' && /^#(VALUE!|WAARDE!|N\/A|REF!|NAME\?)$/i.test(v.trim());
   }
-  function sheetToRows(wb, sheetName){
+  const HEADER_CHOICE_MAX = 30; // zoveel regels bieden we aan in de keuzelijst "Kolomnamen staan op"
+  function sheetToRows(wb, sheetName, headerIdxOverride){
     const ws = wb.Sheets[sheetName];
     const range = ws && ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : {s:{r:0, c:0}};
     let matrix = XLSX.utils.sheet_to_json(ws, {header: 1, defval: null, raw: true, blankrows: true});
@@ -1666,8 +1694,21 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (!imgByCell.has(key)) imgByCell.set(key, []);
       imgByCell.get(key).push(image);
     });
-    const headerIdx = findHeaderRowIndex(matrix);
+    const autoIdx = findHeaderRowIndex(matrix);
+    const headerIdx = (headerIdxOverride != null && headerIdxOverride < matrix.length) ? headerIdxOverride : autoIdx;
     const names = matrix.length ? buildHeaderNames(matrix[headerIdx]) : [];
+    // Regels die als headerregel te kiezen zijn, met hun regelnummer zoals Excel het toont
+    // (bij een gekantelde tabel is dat de kolomletter).
+    const options = [];
+    for (let r = 0; r < Math.min(HEADER_CHOICE_MAX, matrix.length); r++){
+      const filled = (matrix[r] || []).filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+      if (!filled.length) continue;
+      const label = vertical ? 'kolom ' + colLetters(range.s.c + r) : 'regel ' + (range.s.r + r + 1);
+      let preview = filled.slice(0, 4).map(v => String(v).trim().slice(0, 25)).join(' | ');
+      if (filled.length > 4) preview += ' | \u2026';
+      options.push({idx: r, label, preview});
+    }
+    sheetToRows.lastHeaderInfo = {idx: headerIdx, autoIdx, options};
     const rows = [];
     let usesFallbackCol = false;
     for (let r = headerIdx + 1; r < matrix.length; r++){
@@ -1693,6 +1734,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   function handleFile(file){
     sourceFileName = file.name || null;
+    headerRowChoice = null;
     showProgress(2, 'Bestand lezen...');
     const reader = new FileReader();
     reader.onprogress = function(e){
@@ -1739,6 +1781,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         [...sheetPicker.querySelectorAll('button')].forEach(x=>x.classList.remove('active'));
         b.classList.add('active');
         showProgress(45, 'Tabblad "' + name + '" laden...');
+        headerRowChoice = null;
         nextTick(() => loadSheet(name));
       });
       sheetPicker.appendChild(b);
@@ -1808,8 +1851,18 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     currentSheet = name;
     showProgress(50, 'Rijen omzetten naar JSON...');
     nextTick(() => {
-      rawRows = sheetToRows(workbook, name);
+      rawRows = sheetToRows(workbook, name, headerRowChoice);
+      headerRowInfo = sheetToRows.lastHeaderInfo;
       if (!rawRows.length){
+        if (headerRowChoice != null){
+          // Onder de gekozen regel staat niets: terug naar de automatische keuze.
+          hideProgress();
+          alert('Onder de gekozen regel staan geen gegevens. De viewer gebruikt weer de automatisch herkende regel.');
+          headerRowChoice = null;
+          showProgress(50, 'Opnieuw inlezen...');
+          nextTick(() => loadSheet(name));
+          return;
+        }
         hideProgress();
         alert('Dit tabblad bevat geen data (of geen herkenbare headerrij).');
         return;
@@ -2542,9 +2595,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   }
 
+  // Keuzelijst "Kolomnamen staan op": alleen als het oorspronkelijke werkblad nog ingeladen is
+  // (niet in een opgeslagen HTML-viewer, daar zit alleen de omgezette data in).
+  function renderHeaderRowConfig(){
+    const info = headerRowInfo;
+    if (!workbook || !currentSheet || !info || !info.options.length){
+      headerRowConfigEl.style.display = 'none';
+      return;
+    }
+    headerRowConfigEl.style.display = '';
+    headerRowSelect.innerHTML = info.options.map(o =>
+      `<option value="${o.idx}"${o.idx === info.idx ? ' selected' : ''}>${escapeHtml(o.label.charAt(0).toUpperCase() + o.label.slice(1))}${o.idx === info.autoIdx ? ' (automatisch herkend)' : ''}: ${escapeHtml(o.preview)}</option>`
+    ).join('');
+  }
+
   function renderConfigScreen(){
     configRowCount.textContent = rawRows.length.toLocaleString('nl-NL') + ' rijen · ' + columns.length + ' kolommen gevonden in "' + currentSheet + '"';
     renderRowGroupLevelsConfig();
+    renderHeaderRowConfig();
     renderThemePickerConfig();
     colConfigGroups.innerHTML = '';
     const query = configSearchQuery.trim().toLowerCase();
@@ -3139,6 +3207,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   document.querySelectorAll('input[name="tableOrientation"]').forEach(radio => {
     radio.addEventListener('change', () => {
       tableOrientation = radio.value;
+      headerRowChoice = null; // regelnummers betekenen na kantelen iets anders
       // Als er al een werkblad geparsed is (bv. keuze gemaakt ná het kiezen van een tabblad),
       // meteen opnieuw inlezen met de nieuwe oriëntatie.
       if (workbook && currentSheet){
