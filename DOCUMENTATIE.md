@@ -34,6 +34,7 @@ Het bestand is ~1MB doordat de complete **SheetJS/xlsx.js** library inline staat
 - Bij meerdere tabbladen: sheet-picker
 - Ondersteunt **verticale tabellen** (veldnamen in kolom A) via `transposeMatrix()`
 - Automatische **header-detectie** (`findHeaderRowIndex`): slaat lege/titeltekst-regels boven de eigenlijke header over
+- **Headerregel zelf kiezen**: op het configuratiescherm staat "Kolomnamen staan op" met de eerste 30 gevulde regels (Excel-regelnummer of, bij verticale tabellen, kolomletter, plus een voorbeeld van de inhoud). Een keuze leest het tabblad opnieuw in (`headerRowChoice`); een nieuw bestand, ander tabblad of andere tabelindeling zet hem terug op automatisch. Alleen beschikbaar zolang het oorspronkelijke bestand geladen is, niet in een opgeslagen HTML-viewer
 - Converteert cellenmatrix naar array-of-objects (`rawRows`) via `sheetToRows` (gedeeld door openen en "Bestand toevoegen")
 
 ### Foto's (`extractWorkbookImages`, `sheetToRows`)
