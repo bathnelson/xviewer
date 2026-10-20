@@ -33,7 +33,8 @@ Het bestand is ~1MB doordat de complete **SheetJS/xlsx.js** library inline staat
 - **CSV-tekenset**: CSV's worden eerst zelf gedecodeerd — UTF-8 als dat geldig is, anders Windows-1252 (oudere Excel-export) — zodat accenten (é, ë, ï) goed doorkomen, ook zonder BOM
 - Bij meerdere tabbladen: sheet-picker
 - Ondersteunt **verticale tabellen** (veldnamen in kolom A) via `transposeMatrix()`
-- Automatische **header-detectie** (`findHeaderRowIndex`): slaat lege/titeltekst-regels boven de eigenlijke header over
+- Automatische **header-detectie** (`findHeaderRowIndex`): van de regels die op kolomkoppen lijken, wint die met de meeste gevulde cellen. Zo worden lege regels, titels en uitlegregels boven de eigenlijke header overgeslagen
+- **Uitleg boven kolomkoppen** (`findColumnDescriptions`): tekst in de regels boven de headerrij wordt de toelichting (`description`) van de kolom eronder, ook via samengevoegde cellen. Titels (een samengevoegde cel over (bijna) de hele breedte, of een losse cel verder boven de koppen) tellen niet mee. De toelichting verschijnt als tooltip op de kolomkop (stippellijn), bij het facet, in het detailvenster en in het configuratiescherm, en gaat mee in de opgeslagen HTML
 - **Headerregel zelf kiezen**: op het configuratiescherm staat "Kolomnamen staan op" met de eerste 30 gevulde regels (Excel-regelnummer of, bij verticale tabellen, kolomletter, plus een voorbeeld van de inhoud). Een keuze leest het tabblad opnieuw in (`headerRowChoice`); een nieuw bestand, ander tabblad of andere tabelindeling zet hem terug op automatisch. Alleen beschikbaar zolang het oorspronkelijke bestand geladen is, niet in een opgeslagen HTML-viewer
 - Converteert cellenmatrix naar array-of-objects (`rawRows`) via `sheetToRows` (gedeeld door openen en "Bestand toevoegen")
 
