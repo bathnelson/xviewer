@@ -292,6 +292,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     border:1px solid var(--border);
     border-radius:10px;
   }
+  .has-description{text-decoration:underline dotted;text-underline-offset:3px;cursor:help;}
+  .col-description,.rdf-description{font-weight:normal;font-size:11.5px;color:var(--text-muted);white-space:pre-line;margin-top:2px;}
   .header-row-select{
     flex:1;
     min-width:220px;
@@ -1708,7 +1710,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (filled.length > 4) preview += ' | \u2026';
       options.push({idx: r, label, preview});
     }
-    sheetToRows.lastHeaderInfo = {idx: headerIdx, autoIdx, options};
+    // Samengevoegde cellen in matrix-coördinaten (gekanteld: rij en kolom omgewisseld).
+    const merges = ((ws && ws['!merges']) || []).map(m => vertical
+      ? {r0: m.s.c - range.s.c, r1: m.e.c - range.s.c, c0: m.s.r - range.s.r, c1: m.e.r - range.s.r}
+      : {r0: m.s.r - range.s.r, r1: m.e.r - range.s.r, c0: m.s.c - range.s.c, c1: m.e.c - range.s.c});
+    const descriptions = findColumnDescriptions(matrix, headerIdx, names, merges);
+    sheetToRows.lastHeaderInfo = {idx: headerIdx, autoIdx, options, descriptions};
     const rows = [];
     let usesFallbackCol = false;
     for (let r = headerIdx + 1; r < matrix.length; r++){
@@ -1816,19 +1823,49 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const lower = filled.map(v => String(v).trim().toLowerCase());
     return new Set(lower).size === lower.length; // kolomnamen zijn uniek; datarijen vaak niet
   }
-  // Eerste regel die als headerrij herkenbaar is; regels met opvallend minder gevulde cellen dan
-  // de breedste regel eromheen (bv. een titel boven de tabel) worden overgeslagen. Valt terug op
-  // regel 0 (het oude gedrag) als niets herkenbaar is.
+  // De als headerrij herkenbare regel met de meeste gevulde cellen (bij gelijkspel de bovenste).
+  // Zo winnen de kolomkoppen van een titel of van een regel uitleg die maar boven een deel van
+  // de kolommen staat. Valt terug op regel 0 (het oude gedrag) als niets herkenbaar is.
   function findHeaderRowIndex(matrix){
     const limit = Math.min(HEADER_SCAN_MAX, matrix.length);
     let maxFilled = 0;
     for (let i = 0; i < limit; i++) maxFilled = Math.max(maxFilled, countFilled(matrix[i]));
+    let best = -1, bestFilled = 0;
     for (let i = 0; i < limit; i++){
       if (!rowLooksLikeHeader(matrix[i])) continue;
-      if (countFilled(matrix[i]) < Math.max(2, Math.ceil(maxFilled / 2))) continue;
-      return i;
+      const filled = countFilled(matrix[i]);
+      if (filled < Math.max(2, Math.ceil(maxFilled / 2))) continue;
+      if (filled > bestFilled){ best = i; bestFilled = filled; }
     }
-    return 0;
+    return best >= 0 ? best : 0;
+  }
+  // Uitleg die boven een kolomkop staat (regels boven de headerrij) wordt de toelichting van die
+  // kolom. Samengevoegde cellen tellen voor elke kolom die ze bedekken, behalve als ze (bijna) de
+  // hele tabelbreedte beslaan: dat is een titel. Een regel met maar één gevulde cel telt alleen
+  // als hij direct boven de koppen staat; verder naar boven is zoiets meestal een titel.
+  function findColumnDescriptions(matrix, headerIdx, names, merges){
+    const out = {};
+    if (headerIdx <= 0) return out;
+    const width = names.length;
+    const cellAt = (r, c) => {
+      const v = (matrix[r] || [])[c];
+      if (v !== null && v !== undefined && String(v).trim() !== '') return {v, span: 1};
+      const m = merges.find(m => r >= m.r0 && r <= m.r1 && c >= m.c0 && c <= m.c1);
+      if (!m) return null;
+      const mv = (matrix[m.r0] || [])[m.c0];
+      return (mv !== null && mv !== undefined && String(mv).trim() !== '') ? {v: mv, span: m.c1 - m.c0 + 1} : null;
+    };
+    for (let r = 0; r < headerIdx; r++){
+      if (r !== headerIdx - 1 && countFilled(matrix[r] || []) < 2) continue;
+      names.forEach((nm, c) => {
+        const cell = cellAt(r, c);
+        if (!cell || (width > 2 && cell.span >= width - 1)) return;
+        const text = String(cell.v instanceof Date ? cell.v.toLocaleDateString('nl-NL') : cell.v).trim();
+        if (text.toLowerCase() === nm.toLowerCase()) return;
+        out[nm] = out[nm] ? out[nm] + '\n' + text : text;
+      });
+    }
+    return out;
   }
   // Maakt van de headerrij nette, unieke kolomnamen (lege cellen krijgen "Kolom A/B/...",
   // dubbele namen een _2/_3-achtervoegsel).
@@ -1870,6 +1907,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       updateProgress(70, 'Kolommen detecteren...');
       nextTick(() => {
         columns = detectColumns(rawRows);
+        const descriptions = (headerRowInfo && headerRowInfo.descriptions) || {};
+        columns.forEach(c => { if (descriptions[c.name]) c.description = descriptions[c.name]; });
         updateProgress(82, 'Adresvelden en BAG-ID\'s herkennen...');
         nextTick(() => {
           applyAddressAggregation();
@@ -2517,7 +2556,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (c.suggestFinancial) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="showAsCurrency" ${fieldConfig[c.name].showAsCurrency?'checked':''}> Toon als bedrag (&euro;)</label>`);
     if (c.suggestEnergyLabel) extraToggles.push(`<label class="meta-toggle"><input type="checkbox" data-field="${escapeAttr(c.name)}" data-role="showAsEnergyLabel" ${fieldConfig[c.name].showAsEnergyLabel?'checked':''}> Toon als energielabel-badge</label>`);
     tr.innerHTML = `
-      <td class="colname">${escapeHtml(c.name)}</td>
+      <td class="colname">${escapeHtml(c.name)}${c.description ? `<div class="col-description" title="Uitleg die boven deze kolomkop staat">${escapeHtml(c.description)}</div>` : ''}</td>
       <td class="meta">
         <span class="type-badge">${c.type}</span>
         &middot; ${c.uniqueCount.toLocaleString('nl-NL')} unieke waarden
@@ -3330,7 +3369,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     group.dataset.field = field;
     group.innerHTML = `
       <div class="facet-title">
-        <span>${escapeHtml(field)}</span>
+        <span${col && col.description ? ` class="has-description" title="${escapeAttr(col.description)}"` : ''}>${escapeHtml(field)}</span>
         <span class="facet-volgorde">
           <button type="button" class="facet-omhoog" title="Facet omhoog">&#9650;</button>
           <button type="button" class="facet-omlaag" title="Facet omlaag">&#9660;</button>
@@ -4180,6 +4219,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const th = document.createElement('th');
       th.textContent = c.name;
       th.title = c.name; // volledige naam als tooltip, want de kolom kan smaller zijn dan de naam lang is
+      if (c.description){ th.title += '\n\n' + c.description; th.classList.add('has-description'); }
       zetVast(th, i);
       th.addEventListener('click', () => {
         if (sortState.col === c.name) sortState.dir *= -1;
@@ -4794,7 +4834,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     rowDetailBody.innerHTML = cols.map(c => {
       const cfg = fieldConfig[c.name];
       const html = buildCellInnerHtml(row[c.name], c, cfg, tokens, row);
-      return `<div class="row-detail-field"><div class="rdf-name">${escapeHtml(c.name)}</div><div class="rdf-value">${html || '<span class="muted-note">-</span>'}</div></div>`;
+      return `<div class="row-detail-field"><div class="rdf-name"${c.description ? ` title="${escapeAttr(c.description)}"` : ''}>${escapeHtml(c.name)}${c.description ? `<div class="rdf-description">${escapeHtml(c.description)}</div>` : ''}</div><div class="rdf-value">${html || '<span class="muted-note">-</span>'}</div></div>`;
     }).join('');
     rowDetailOverlay.classList.add('visible');
     detailPopupOpen = true;
@@ -4821,7 +4861,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         }
         html = child._aggCache.get(c.name);
       }
-      return `<div class="row-detail-field"><div class="rdf-name">${escapeHtml(c.name)}</div><div class="rdf-value">${html || '<span class="muted-note">-</span>'}</div></div>`;
+      return `<div class="row-detail-field"><div class="rdf-name"${c.description ? ` title="${escapeAttr(c.description)}"` : ''}>${escapeHtml(c.name)}${c.description ? `<div class="rdf-description">${escapeHtml(c.description)}</div>` : ''}</div><div class="rdf-value">${html || '<span class="muted-note">-</span>'}</div></div>`;
     }).join('');
     rowDetailOverlay.classList.add('visible');
     detailPopupOpen = true;
